@@ -19,25 +19,56 @@ pub struct Node {
     pub links: usize,
 }
 
-fn canonicalize(s: &str) -> String {
-    s.chars()
-        .filter(|c| c.is_alphanumeric())
-        .flat_map(|c| c.to_lowercase())
-        .collect::<String>()
+fn normalize(s: &str) -> String {
+    let mut out = String::new();
+    let mut in_space = false;
+    for c in s.chars() {
+        if c.is_alphanumeric() {
+            if in_space && !out.is_empty() {
+                out.push(' ');
+            }
+            out.extend(c.to_lowercase());
+            in_space = false;
+        } else {
+            in_space = true;
+        }
+    }
+    out
 }
-fn find_unique_links(text: &str, names: &[String]) -> Vec<usize> {
+
+fn canonicalize(s: &str) -> String {
+    normalize(s).replace(' ', "")
+}
+
+fn is_boundary(text: &str, idx: usize) -> bool {
+    idx == 0 || text.as_bytes()[idx - 1].is_ascii_whitespace()
+}
+
+fn is_end_boundary(text: &str, idx: usize) -> bool {
+    idx == text.len() || text.as_bytes()[idx].is_ascii_whitespace()
+}
+
+fn find_unique_links(text: &str, canon: &[String], names: &[String]) -> Vec<usize> {
     let mut result = Vec::new();
     for (i, name_i) in names.iter().enumerate() {
         let mut search_start = 0;
         let mut found = false;
         while let Some(pos) = text[search_start..].find(name_i) {
             let idx = search_start + pos;
+            let end = idx + name_i.len();
+            if !is_boundary(text, idx) || !is_end_boundary(text, end) {
+                search_start = idx + 1;
+                continue;
+            }
             let mut overshadowed = false;
             for (j, name_j) in names.iter().enumerate() {
                 if i == j {
                     continue;
                 }
-                if name_j.starts_with(name_i) && text[idx..].starts_with(name_j) {
+                if canon[j].starts_with(&canon[i])
+                    && text[idx..].starts_with(name_j)
+                    && is_end_boundary(text, idx + name_j.len())
+                {
                     overshadowed = true;
                     break;
                 }
@@ -58,6 +89,7 @@ fn find_unique_links(text: &str, names: &[String]) -> Vec<usize> {
 pub fn build_graph() -> Graph {
     let mut nodes = Vec::new();
     let mut canonical = Vec::new();
+    let mut normalized = Vec::new();
     let mut index_map: HashMap<String, usize> = HashMap::new();
 
     if let Ok(entries) = fs::read_dir(NOTES_DIR) {
@@ -79,6 +111,7 @@ pub fn build_graph() -> Graph {
                     });
                     index_map.insert(canon.clone(), idx);
                     canonical.push(canon);
+                    normalized.push(normalize(stem));
                 }
             }
         }
@@ -90,8 +123,8 @@ pub fn build_graph() -> Graph {
     for i in 0..nodes.len() {
         let path = &nodes[i].path;
         if let Ok(content) = fs::read_to_string(path) {
-            let text = canonicalize(&content);
-            for j in find_unique_links(&text, &canonical) {
+            let text = normalize(&content);
+            for j in find_unique_links(&text, &canonical, &normalized) {
                 if i == j {
                     continue;
                 }
@@ -124,6 +157,7 @@ pub fn build_graph() -> Graph {
 pub struct GraphData {
     pub graph: Graph,
     canonical: Vec<String>,
+    normalized: Vec<String>,
     contents: Vec<String>,
 }
 
@@ -132,7 +166,7 @@ fn recompute_edges(data: &mut GraphData) {
     let mut edges: HashSet<(usize, usize)> = HashSet::new();
     for i in 0..n {
         let text = &data.contents[i];
-        for j in find_unique_links(text, &data.canonical) {
+        for j in find_unique_links(text, &data.canonical, &data.normalized) {
             if i == j {
                 continue;
             }
@@ -158,6 +192,7 @@ fn recompute_edges(data: &mut GraphData) {
 pub fn load_graph_data() -> GraphData {
     let mut nodes = Vec::new();
     let mut canonical = Vec::new();
+    let mut normalized = Vec::new();
     let mut contents = Vec::new();
 
     if let Ok(entries) = fs::read_dir(NOTES_DIR) {
@@ -175,8 +210,9 @@ pub fn load_graph_data() -> GraphData {
                         links: 0,
                     });
                     canonical.push(canon);
+                    normalized.push(normalize(stem));
                     let text = fs::read_to_string(&path).unwrap_or_default();
-                    contents.push(canonicalize(&text));
+                    contents.push(normalize(&text));
                 }
             }
         }
@@ -188,6 +224,7 @@ pub fn load_graph_data() -> GraphData {
             edges: Vec::new(),
         },
         canonical,
+        normalized,
         contents,
     };
     recompute_edges(&mut data);
@@ -201,7 +238,7 @@ pub fn update_open_notes(data: &mut GraphData, open_notes: &[String]) {
             if let Some(idx) = data.canonical.iter().position(|c| c == &canon) {
                 let path = &data.graph.nodes[idx].path;
                 if let Ok(content) = fs::read_to_string(path) {
-                    data.contents[idx] = canonicalize(&content);
+                    data.contents[idx] = normalize(&content);
                 }
             }
         }
