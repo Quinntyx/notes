@@ -427,6 +427,7 @@ dependencies = [
 name = "notes"
 version = "0.1.0"
 dependencies = [
+ "cairo-rs",
  "gtk4",
  "vte4",
 ]
