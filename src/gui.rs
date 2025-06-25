@@ -41,20 +41,21 @@ pub fn run_gui() {
             .build();
         side_box.append(&scroll);
 
-        // button to open graph view
-        let graph_button = Button::with_label("Graph");
-        let app_clone = app.clone();
-        graph_button.connect_clicked(move |_| {
-            open_graph_window(&app_clone);
-        });
-        side_box.append(&graph_button);
-
-        main_box.append(&side_box);
-
         // notebook to hold multiple editor tabs
         let notebook = Notebook::new();
         notebook.set_hexpand(true);
         notebook.set_vexpand(true);
+
+        // button to open graph view
+        let graph_button = Button::with_label("Graph");
+        let notebook_for_graph = notebook.clone();
+        graph_button.connect_clicked(move |_| {
+            open_graph_tab(&notebook_for_graph);
+        });
+        side_box.append(&graph_button);
+
+        // add side box first so it appears on the left
+        main_box.append(&side_box);
         main_box.append(&notebook);
 
         // track open tabs so we don't spawn editors twice
@@ -121,20 +122,15 @@ pub fn run_gui() {
     app.run_with_args::<&str>(&[]);
 }
 
-fn open_graph_window(app: &Application) {
+fn open_graph_tab(notebook: &Notebook) {
     use crate::graph::build_graph;
     use std::f64::consts::PI;
 
     let graph = build_graph();
 
-    let window = ApplicationWindow::builder()
-        .application(app)
-        .title("Notes Graph")
-        .default_width(800)
-        .default_height(600)
-        .build();
-
     let area = DrawingArea::new();
+    area.set_hexpand(true);
+    area.set_vexpand(true);
     area.set_draw_func(move |_, ctx, width, height| {
         // clear the drawing area first
         ctx.set_source_rgb(1.0, 1.0, 1.0);
@@ -197,6 +193,9 @@ fn open_graph_window(app: &Application) {
         }
     });
 
-    window.set_child(Some(&area));
-    window.show();
+    let label_widget = Label::new(Some("Graph"));
+    notebook.append_page(&area, Some(&label_widget));
+    if let Some(page) = notebook.page_num(&area) {
+        notebook.set_current_page(Some(page));
+    }
 }
