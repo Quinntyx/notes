@@ -15,6 +15,8 @@ pub struct Graph {
 pub struct Node {
     pub name: String,
     pub path: PathBuf,
+    /// Number of links connected to this node (in or out)
+    pub links: usize,
 }
 
 fn canonicalize(s: &str) -> String {
@@ -43,6 +45,7 @@ pub fn build_graph() -> Graph {
                     nodes.push(Node {
                         name,
                         path: path.clone(),
+                        links: 0,
                     });
                     index_map.insert(canonical, idx);
                 }
@@ -66,6 +69,20 @@ pub fn build_graph() -> Graph {
                 }
             }
         }
+    }
+
+    // count links for each node
+    let mut link_counts = vec![0usize; nodes.len()];
+    for &(a, b) in &edges {
+        if a < link_counts.len() {
+            link_counts[a] += 1;
+        }
+        if b < link_counts.len() {
+            link_counts[b] += 1;
+        }
+    }
+    for (node, count) in nodes.iter_mut().zip(link_counts) {
+        node.links = count;
     }
 
     Graph {
