@@ -136,6 +136,10 @@ fn open_graph_window(app: &Application) {
 
     let area = DrawingArea::new();
     area.set_draw_func(move |_, ctx, width, height| {
+        // clear the drawing area first
+        ctx.set_source_rgb(1.0, 1.0, 1.0);
+        ctx.paint().unwrap();
+
         let n = graph.nodes.len();
         if n == 0 {
             return;
@@ -189,6 +193,7 @@ fn open_graph_window(app: &Application) {
 
             ctx.move_to(x + 12.0, y + 4.0);
             let _ = ctx.show_text(&node.name);
+            ctx.new_path();
         }
     });
 
