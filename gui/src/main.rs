@@ -6,7 +6,7 @@ use gtk4::{
 };
 use vte4::{PtyFlags, Terminal, TerminalExtManual};
 
-use crate::note::NOTES_DIR;
+use notes_core::note::NOTES_DIR;
 
 pub fn run_gui() {
     let app = Application::builder()
@@ -116,7 +116,7 @@ fn open_graph_tab(
     graph_tab: &Rc<RefCell<Option<Overlay>>>,
     graph_cb: &Rc<RefCell<Option<std::boxed::Box<dyn Fn(String)>>>>,
 ) {
-    use crate::graph::{load_graph_data, update_open_notes};
+    use notes_core::graph::{load_graph_data, update_open_notes};
     use std::f64::consts::PI;
 
     if let Some(ref existing) = *graph_tab.borrow() {
@@ -127,7 +127,7 @@ fn open_graph_tab(
     }
 
     struct GraphState {
-        data: crate::graph::GraphData,
+        data: notes_core::graph::GraphData,
         positions: Vec<(f64, f64)>,
         velocities: Vec<(f64, f64)>,
         pan_x: f64,
@@ -554,7 +554,7 @@ fn open_graph_tab(
 }
 
 fn create_new_note(title: &str) {
-    let note = crate::note::Note::new(title.to_string(), String::new(), None);
+    let note = notes_core::note::Note::new(title.to_string(), String::new(), None);
     let _ = note.save();
 }
 
@@ -630,4 +630,8 @@ fn close_current_tab(
         }
         notebook.remove_page(Some(current));
     }
+}
+
+fn main() {
+    run_gui();
 }

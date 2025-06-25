@@ -21,7 +21,7 @@ cargo build
 To run in debug mode with the graphical interface:
 
 ```bash
-cargo run -- gui
+cargo run
 ```
 
 ## Command Line Usage

@@ -424,11 +424,16 @@ dependencies = [
 ]
 
 [[package]]
-name = "notes"
+name = "notes-core"
+version = "0.1.0"
+
+[[package]]
+name = "notes-gui"
 version = "0.1.0"
 dependencies = [
  "cairo-rs",
  "gtk4",
+ "notes-core",
  "vte4",
 ]
 
