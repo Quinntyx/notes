@@ -1,7 +1,7 @@
 use gtk4::prelude::*;
 use gtk4::{
-    Application, ApplicationWindow, Box, Button, DrawingArea, Label, ListBox, ListBoxRow, Notebook,
-    Orientation, ScrolledWindow, gio, glib,
+    Application, ApplicationWindow, Box, Button, Dialog, DialogFlags, DrawingArea, Entry, Label,
+    Notebook, Orientation, gio, glib,
 };
 use vte4::{PtyFlags, Terminal, TerminalExtManual};
 
@@ -13,105 +13,27 @@ pub fn run_gui() {
         .build();
 
     app.connect_activate(|app| {
-        // main container
-        let main_box = Box::new(Orientation::Horizontal, 0);
+        use std::cell::RefCell;
+        use std::collections::HashMap;
+        use std::rc::Rc;
 
-        // container for list and controls
-        let side_box = Box::new(Orientation::Vertical, 5);
-
-        // notes list
-        let list = ListBox::new();
-        list.set_vexpand(true);
-
-        if let Ok(entries) = std::fs::read_dir(NOTES_DIR) {
-            for entry in entries.flatten() {
-                if let Some(name_os) = entry.file_name().to_str() {
-                    let row = ListBoxRow::new();
-                    let label = Label::new(Some(name_os));
-                    row.set_child(Some(&label));
-                    list.append(&row);
-                }
-            }
-        }
-
-        let scroll = ScrolledWindow::builder()
-            .child(&list)
-            .vexpand(true)
-            .min_content_width(200)
-            .build();
-        side_box.append(&scroll);
-
-        // notebook to hold multiple editor tabs
         let notebook = Notebook::new();
         notebook.set_hexpand(true);
         notebook.set_vexpand(true);
 
-        // track open tabs so we don't spawn editors twice
-        use std::cell::RefCell;
-        use std::collections::HashMap;
-        use std::rc::Rc;
         let open_tabs: Rc<RefCell<HashMap<String, Terminal>>> =
             Rc::new(RefCell::new(HashMap::new()));
-
-        // button to open graph view
-        let graph_button = Button::with_label("Graph");
-        let notebook_for_graph = notebook.clone();
-        let tabs_for_graph = open_tabs.clone();
-        graph_button.connect_clicked(move |_| {
-            open_graph_tab(&notebook_for_graph, &tabs_for_graph);
-        });
-        side_box.append(&graph_button);
-
-        // add side box first so it appears on the left
-        main_box.append(&side_box);
-        main_box.append(&notebook);
-
-        // row activation opens note in a new tab or focuses existing one
-        let notebook_clone = notebook.clone();
-        let tabs_clone = open_tabs.clone();
-        list.connect_row_activated(move |_, row| {
-            if let Some(label) = row.child().and_then(|c| c.downcast::<Label>().ok()) {
-                let note_name = label.text().to_string();
-                // check if tab already exists
-                if let Some(term) = tabs_clone.borrow().get(&note_name).cloned() {
-                    if let Some(page) = notebook_clone.page_num(&term) {
-                        notebook_clone.set_current_page(Some(page));
-                        return;
-                    }
-                }
-
-                let path = format!("{}/{}", NOTES_DIR, note_name);
-                let term = Terminal::new();
-                term.set_hexpand(true);
-                term.set_vexpand(true);
-                term.spawn_async(
-                    PtyFlags::DEFAULT,
-                    None::<&str>,
-                    &["nvim", &path],
-                    &[],
-                    glib::SpawnFlags::SEARCH_PATH,
-                    || {},
-                    -1,
-                    None::<&gio::Cancellable>,
-                    |_| {},
-                );
-
-                let label_widget = Label::new(Some(&note_name));
-                notebook_clone.append_page(&term, Some(&label_widget));
-                if let Some(page) = notebook_clone.page_num(&term) {
-                    notebook_clone.set_current_page(Some(page));
-                }
-                tabs_clone.borrow_mut().insert(note_name, term);
-            }
-        });
+        let graph_tab: Rc<RefCell<Option<Box>>> = Rc::new(RefCell::new(None));
 
         let window = ApplicationWindow::builder()
             .application(app)
             .title("Notes GUI")
             .default_width(800)
             .default_height(600)
-            .child(&main_box)
+            .child(&notebook)
             .build();
+
+        open_graph_tab(&notebook, &open_tabs, &graph_tab, &window);
 
         window.show();
     });
@@ -127,12 +49,24 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-fn open_graph_tab(notebook: &Notebook, open_tabs: &Rc<RefCell<HashMap<String, Terminal>>>) {
-    use crate::graph::build_graph;
+fn open_graph_tab(
+    notebook: &Notebook,
+    open_tabs: &Rc<RefCell<HashMap<String, Terminal>>>,
+    graph_tab: &Rc<RefCell<Option<Box>>>,
+    window: &ApplicationWindow,
+) {
+    use crate::graph::{load_graph_data, update_open_notes};
     use std::f64::consts::PI;
 
+    if let Some(ref existing) = *graph_tab.borrow() {
+        if let Some(page) = notebook.page_num(existing) {
+            notebook.set_current_page(Some(page));
+        }
+        return;
+    }
+
     struct GraphState {
-        graph: crate::graph::Graph,
+        data: crate::graph::GraphData,
         positions: Vec<(f64, f64)>,
         velocities: Vec<(f64, f64)>,
         pan_x: f64,
@@ -140,33 +74,96 @@ fn open_graph_tab(notebook: &Notebook, open_tabs: &Rc<RefCell<HashMap<String, Te
         scale: f64,
     }
 
-    let graph = build_graph();
-    let n = graph.nodes.len();
-
-    let mut positions = Vec::new();
-    for i in 0..n {
-        let angle = i as f64 / n.max(1) as f64 * 2.0 * PI;
-        let r = 100.0;
-        positions.push((r * angle.cos(), r * angle.sin()));
+    fn reset_state(state: &mut GraphState) {
+        state.data = load_graph_data();
+        let n = state.data.graph.nodes.len();
+        state.positions.clear();
+        for i in 0..n {
+            let angle = i as f64 / n.max(1) as f64 * 2.0 * PI;
+            let r = 100.0;
+            state.positions.push((r * angle.cos(), r * angle.sin()));
+        }
+        state.velocities = vec![(0.0, 0.0); n];
+        state.pan_x = 0.0;
+        state.pan_y = 0.0;
+        state.scale = 1.0;
     }
 
-    let state = Rc::new(RefCell::new(GraphState {
-        graph,
-        positions,
-        velocities: vec![(0.0, 0.0); n],
+    let mut init = GraphState {
+        data: load_graph_data(),
+        positions: Vec::new(),
+        velocities: Vec::new(),
         pan_x: 0.0,
         pan_y: 0.0,
         scale: 1.0,
-    }));
+    };
+    let n = init.data.graph.nodes.len();
+    for i in 0..n {
+        let angle = i as f64 / n.max(1) as f64 * 2.0 * PI;
+        let r = 100.0;
+        init.positions.push((r * angle.cos(), r * angle.sin()));
+    }
+    init.velocities = vec![(0.0, 0.0); n];
+    let state = Rc::new(RefCell::new(init));
 
     let area = DrawingArea::new();
     area.set_hexpand(true);
     area.set_vexpand(true);
 
+    let container = Box::new(Orientation::Vertical, 5);
+    let toolbar = Box::new(Orientation::Horizontal, 5);
+    let home_button = Button::with_label("Home");
+    let new_button = Button::with_label("New Note");
+    toolbar.append(&home_button);
+    toolbar.append(&new_button);
+    container.append(&toolbar);
+    container.append(&area);
+
+    let home_state = state.clone();
+    let home_area = area.clone();
+    home_button.connect_clicked(move |_| {
+        let mut st = home_state.borrow_mut();
+        reset_state(&mut st);
+        home_area.queue_draw();
+    });
+
+    let new_state = state.clone();
+    let new_area = area.clone();
+    let window_clone = window.clone();
+    new_button.connect_clicked(move |_| {
+        let dialog = Dialog::with_buttons(
+            Some("New Note"),
+            Some(&window_clone),
+            DialogFlags::MODAL,
+            &[
+                ("Create", gtk4::ResponseType::Ok),
+                ("Cancel", gtk4::ResponseType::Cancel),
+            ],
+        );
+        let entry = Entry::new();
+        dialog.content_area().append(&entry);
+        dialog.show();
+        let st_rc = new_state.clone();
+        let area_clone = new_area.clone();
+        dialog.connect_response(move |d, resp| {
+            if resp == gtk4::ResponseType::Ok {
+                let title = entry.text().to_string();
+                if !title.is_empty() {
+                    let note = crate::note::Note::new(title, String::new(), None);
+                    let _ = note.save();
+                    let mut st = st_rc.borrow_mut();
+                    reset_state(&mut st);
+                    area_clone.queue_draw();
+                }
+            }
+            d.close();
+        });
+    });
+
     let draw_state = state.clone();
     area.set_draw_func(move |_, ctx, width, height| {
         let st = draw_state.borrow();
-        let graph = &st.graph;
+        let graph = &st.data.graph;
         let positions = &st.positions;
 
         ctx.set_source_rgb(1.0, 1.0, 1.0);
@@ -263,7 +260,7 @@ fn open_graph_tab(notebook: &Notebook, open_tabs: &Rc<RefCell<HashMap<String, Te
         let gx = (x as f64 - pan_x) / st.scale;
         let gy = (y as f64 - pan_y) / st.scale;
 
-        for (i, node) in st.graph.nodes.iter().enumerate() {
+        for (i, node) in st.data.graph.nodes.iter().enumerate() {
             let (nx, ny) = st.positions[i];
             let radius = 8.0 + (node.links as f64).sqrt() * 2.0;
             let dist2 = (gx - nx).powi(2) + (gy - ny).powi(2);
@@ -309,7 +306,7 @@ fn open_graph_tab(notebook: &Notebook, open_tabs: &Rc<RefCell<HashMap<String, Te
     glib::timeout_add_local(std::time::Duration::from_millis(16), move || {
         {
             let mut st = sim_state.borrow_mut();
-            let n = st.graph.nodes.len();
+            let n = st.data.graph.nodes.len();
             let mut forces = vec![(0.0, 0.0); n];
             for i in 0..n {
                 for j in (i + 1)..n {
@@ -326,7 +323,7 @@ fn open_graph_tab(notebook: &Notebook, open_tabs: &Rc<RefCell<HashMap<String, Te
                     forces[j].1 -= fy;
                 }
             }
-            for &(a, b) in &st.graph.edges {
+            for &(a, b) in &st.data.graph.edges {
                 let dx = st.positions[a].0 - st.positions[b].0;
                 let dy = st.positions[a].1 - st.positions[b].1;
                 let dist = (dx * dx + dy * dy).sqrt();
@@ -349,9 +346,25 @@ fn open_graph_tab(notebook: &Notebook, open_tabs: &Rc<RefCell<HashMap<String, Te
         glib::ControlFlow::Continue
     });
 
+    let switch_state = state.clone();
+    let switch_tabs = open_tabs.clone();
+    let switch_area = area.clone();
+    let switch_container = container.clone();
+    notebook.connect_switch_page(move |nb, _page, idx| {
+        if let Some(page_num) = nb.page_num(&switch_container) {
+            if page_num == idx {
+                let titles: Vec<String> = switch_tabs.borrow().keys().cloned().collect();
+                let mut st = switch_state.borrow_mut();
+                update_open_notes(&mut st.data, &titles);
+                switch_area.queue_draw();
+            }
+        }
+    });
+
     let label_widget = Label::new(Some("Graph"));
-    notebook.append_page(&area, Some(&label_widget));
-    if let Some(page) = notebook.page_num(&area) {
+    notebook.append_page(&container, Some(&label_widget));
+    if let Some(page) = notebook.page_num(&container) {
         notebook.set_current_page(Some(page));
     }
+    *graph_tab.borrow_mut() = Some(container);
 }
