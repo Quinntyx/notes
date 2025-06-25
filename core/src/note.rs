@@ -1,9 +1,23 @@
+use once_cell::sync::OnceCell;
 use std::fs;
 use std::io::{self, Write};
 use std::path::PathBuf;
 // Intentionally removed: use std::path::Path;
 
 pub const NOTES_DIR: &str = "notes";
+
+static VAULT_DIR: OnceCell<PathBuf> = OnceCell::new();
+
+pub fn set_vault_dir<P: Into<PathBuf>>(dir: P) {
+    let _ = VAULT_DIR.set(dir.into());
+}
+
+pub fn vault_dir() -> PathBuf {
+    VAULT_DIR
+        .get()
+        .cloned()
+        .unwrap_or_else(|| PathBuf::from(NOTES_DIR))
+}
 
 #[derive(Debug, Clone)]
 pub struct Note {
@@ -15,7 +29,7 @@ pub struct Note {
 
 impl Note {
     pub fn new(title: String, content: String, aliases: Option<Vec<String>>) -> Self {
-        let mut path = PathBuf::from(NOTES_DIR);
+        let mut path = vault_dir();
         path.push(format!("{}.md", title));
         Note {
             title,
@@ -26,7 +40,7 @@ impl Note {
     }
 
     pub fn save(&self) -> io::Result<()> {
-        fs::create_dir_all(NOTES_DIR)?;
+        fs::create_dir_all(vault_dir())?;
         let mut file = fs::File::create(&self.path)?;
         file.write_all(self.content.as_bytes())?;
         Ok(())
@@ -54,7 +68,7 @@ impl Note {
     }
 
     pub fn path_from_title(title: &str) -> PathBuf {
-        let mut path = PathBuf::from(NOTES_DIR);
+        let mut path = vault_dir();
         path.push(format!("{}.md", title));
         path
     }
