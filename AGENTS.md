@@ -24,3 +24,9 @@ These conventions help keep contributions uniform and easy to review.
 - Prefer popovers for modal interactions to keep the interface lightweight.
 - Keep node label text size constant as you zoom; offset labels outward relative
   to zoom so they don't overlap the nodes.
+
+## Crate layout
+
+- **notes-core**: Library and CLI for loading notes, building the graph and managing files. Non-UI logic belongs here.
+- **notes-gui**: GTK application providing the graphical interface. It depends on notes-core for data handling.
+

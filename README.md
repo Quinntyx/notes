@@ -4,10 +4,11 @@ Notes is a simple note taking application written in Rust. It is inspired by Obs
 
 ## Features
 
-- Notes saved as individual `.md` files under the `notes/` directory
+- Notes can be written in multiple formats and grouped by filename
+- Binary assets live alongside the text notes
 - CLI commands for creating and viewing notes
-- Native GTK interface that lists notes and opens them in a tabbed NeoVim terminal
-- Interactive graph view showing links between notes
+- Interactive graph view shows links between notes and lists available formats
+- Text formats open in tabs while binary formats launch with the system default application
 - Early project direction aims for integration with external project management tools
 
 ## Building
