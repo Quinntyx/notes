@@ -35,31 +35,29 @@ fn show_dashboard(app: &Application) {
         .default_height(200)
         .build();
 
+    let entry = Entry::new();
+    entry.set_hexpand(true);
+    entry.set_placeholder_text(Some("Vault directory"));
     let button = Button::with_label("Open Vault");
-    window.set_child(Some(&button));
+    let vbox = Box::new(Orientation::Vertical, 5);
+    vbox.set_margin_top(12);
+    vbox.set_margin_bottom(12);
+    vbox.set_margin_start(12);
+    vbox.set_margin_end(12);
+    vbox.append(&entry);
+    vbox.append(&button);
+    window.set_child(Some(&vbox));
 
-    button.connect_clicked(glib::clone!(@weak window, @weak app => move |_| {
-        let dialog = gtk4::FileChooserNative::builder()
-            .title("Choose Vault")
-            .action(gtk4::FileChooserAction::SelectFolder)
-            .transient_for(&window)
-            .build();
-        glib::spawn_future_local(glib::clone!(@weak window, @weak app => async move {
-            let response = dialog.run_future().await;
-            if response == gtk4::ResponseType::Accept {
-                if let Some(file) = dialog.file() {
-                    if let Some(path) = file.path() {
-                        set_vault_dir(path);
-                        dialog.destroy();
-                        window.close();
-                        open_main_window(&app);
-                        return;
-                    }
-                }
+    button.connect_clicked(
+        glib::clone!(@weak window, @weak app, @weak entry => move |_| {
+            let path = entry.text();
+            if !path.is_empty() {
+                set_vault_dir(path.as_str());
+                window.close();
+                open_main_window(&app);
             }
-            dialog.destroy();
-        }));
-    }));
+        }),
+    );
     window.show();
 }
 
