@@ -12,11 +12,6 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 pub fn run_gui() {
-    // Fallback to the memory backend if no schemas are installed.
-    if std::env::var("GSETTINGS_BACKEND").is_err() {
-        let _ = glib::setenv("GSETTINGS_BACKEND", "memory", false);
-    }
-
     let app = Application::builder()
         .application_id("com.example.notes")
         .build();
@@ -677,5 +672,14 @@ fn close_current_tab(
 }
 
 fn main() {
+    if std::env::var("GSETTINGS_BACKEND")
+        .ok()
+        .filter(|v| !v.is_empty())
+        .is_none()
+    {
+        unsafe {
+            std::env::set_var("GSETTINGS_BACKEND", "memory");
+        }
+    }
     run_gui();
 }
