@@ -219,10 +219,20 @@ fn open_graph_tab(notebook: &Notebook, open_tabs: &Rc<RefCell<HashMap<String, Te
     let pan_state = state.clone();
     let pan_area = area.clone();
     let gesture = gtk4::GestureDrag::new();
+    gesture.set_button(gtk4::gdk::BUTTON_MIDDLE);
+    let start_pan = Rc::new(RefCell::new((0.0f64, 0.0f64)));
+    let start_pan_begin = start_pan.clone();
+    gesture.connect_drag_begin(move |_, _x, _y| {
+        let st = pan_state.borrow();
+        *start_pan_begin.borrow_mut() = (st.pan_x, st.pan_y);
+    });
+    let pan_state_upd = state.clone();
+    let start_pan_update = start_pan.clone();
     gesture.connect_drag_update(move |_, dx, dy| {
-        let mut st = pan_state.borrow_mut();
-        st.pan_x += dx as f64;
-        st.pan_y += dy as f64;
+        let mut st = pan_state_upd.borrow_mut();
+        let (sx, sy) = *start_pan_update.borrow();
+        st.pan_x = sx + dx as f64;
+        st.pan_y = sy + dy as f64;
         pan_area.queue_draw();
     });
     area.add_controller(gesture);
