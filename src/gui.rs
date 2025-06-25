@@ -1,8 +1,11 @@
 use gtk4::prelude::*;
-use gtk4::{gio, glib, Application, ApplicationWindow, Box, Orientation, ListBox, ListBoxRow, Label, ScrolledWindow};
-use vte4::{Terminal, PtyFlags, TerminalExtManual};
+use gtk4::{
+    Application, ApplicationWindow, Box, Label, ListBox, ListBoxRow, Notebook, Orientation,
+    ScrolledWindow, gio, glib,
+};
+use vte4::{PtyFlags, Terminal, TerminalExtManual};
 
-use crate::note::{NOTES_DIR};
+use crate::note::NOTES_DIR;
 
 pub fn run_gui() {
     let app = Application::builder()
@@ -35,19 +38,38 @@ pub fn run_gui() {
             .build();
         main_box.append(&scroll);
 
-        // terminal for editing
-        let terminal = Terminal::new();
-        terminal.set_hexpand(true);
-        terminal.set_vexpand(true);
-        main_box.append(&terminal);
+        // notebook to hold multiple editor tabs
+        let notebook = Notebook::new();
+        notebook.set_hexpand(true);
+        notebook.set_vexpand(true);
+        main_box.append(&notebook);
 
-        // row activation opens note in nvim
-        let term_clone = terminal.clone();
+        // track open tabs so we don't spawn editors twice
+        use std::cell::RefCell;
+        use std::collections::HashMap;
+        use std::rc::Rc;
+        let open_tabs: Rc<RefCell<HashMap<String, Terminal>>> =
+            Rc::new(RefCell::new(HashMap::new()));
+
+        // row activation opens note in a new tab or focuses existing one
+        let notebook_clone = notebook.clone();
+        let tabs_clone = open_tabs.clone();
         list.connect_row_activated(move |_, row| {
             if let Some(label) = row.child().and_then(|c| c.downcast::<Label>().ok()) {
                 let note_name = label.text().to_string();
+                // check if tab already exists
+                if let Some(term) = tabs_clone.borrow().get(&note_name).cloned() {
+                    if let Some(page) = notebook_clone.page_num(&term) {
+                        notebook_clone.set_current_page(Some(page));
+                        return;
+                    }
+                }
+
                 let path = format!("{}/{}", NOTES_DIR, note_name);
-                term_clone.spawn_async(
+                let term = Terminal::new();
+                term.set_hexpand(true);
+                term.set_vexpand(true);
+                term.spawn_async(
                     PtyFlags::DEFAULT,
                     None::<&str>,
                     &["nvim", &path],
@@ -58,6 +80,13 @@ pub fn run_gui() {
                     None::<&gio::Cancellable>,
                     |_| {},
                 );
+
+                let label_widget = Label::new(Some(&note_name));
+                notebook_clone.append_page(&term, Some(&label_widget));
+                if let Some(page) = notebook_clone.page_num(&term) {
+                    notebook_clone.set_current_page(Some(page));
+                }
+                tabs_clone.borrow_mut().insert(note_name, term);
             }
         });
 
