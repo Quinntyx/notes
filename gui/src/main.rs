@@ -574,28 +574,42 @@ fn open_graph_tab(
         let Some(note_name) = note_name_opt else {
             return;
         };
-        let mut chosen = None;
-        {
+        let idx_opt = {
             let st = click_state.borrow();
-            if let Some(node) = st.data.graph.nodes.iter().find(|n| n.name == note_name) {
-                if let Some(md) = node
+            st.data.graph.nodes.iter().position(|n| n.name == note_name)
+        };
+
+        let mut chosen = None;
+        if let Some(idx) = idx_opt {
+            let mut st = click_state.borrow_mut();
+            let node = &mut st.data.graph.nodes[idx];
+            if let Some(md) = node
+                .paths
+                .iter()
+                .find(|p| p.extension().and_then(|e| e.to_str()) == Some("md"))
+                .cloned()
+            {
+                chosen = Some((node.clone(), md));
+            } else {
+                let mut text_paths: Vec<PathBuf> = node
                     .paths
                     .iter()
-                    .find(|p| p.extension().and_then(|e| e.to_str()) == Some("md"))
-                {
-                    chosen = Some((node.clone(), md.clone()));
+                    .filter(|p| is_text_file(p))
+                    .cloned()
+                    .collect();
+                text_paths.sort_by_key(|p| {
+                    p.extension()
+                        .and_then(|s| s.to_str())
+                        .map(|s| s.to_owned())
+                        .unwrap_or_default()
+                });
+                if let Some(p) = text_paths.first() {
+                    chosen = Some((node.clone(), p.clone()));
                 } else {
-                    let mut text_paths: Vec<_> =
-                        node.paths.iter().filter(|p| is_text_file(p)).collect();
-                    text_paths
-                        .sort_by_key(|p| p.extension().and_then(|s| s.to_str()).unwrap_or(""));
-                    if let Some(p) = text_paths.first() {
-                        chosen = Some((node.clone(), (*p).clone()));
-                    } else if let Some(first) = node.paths.first() {
-                        let new_path = vault_dir().join(format!("{}.md", node.name));
-                        std::fs::File::create(&new_path).ok();
-                        chosen = Some((node.clone(), new_path));
-                    }
+                    let new_path = vault_dir().join(format!("{}.md", node.name));
+                    let _ = std::fs::File::create(&new_path);
+                    node.paths.push(new_path.clone());
+                    chosen = Some((node.clone(), new_path));
                 }
             }
         }
