@@ -3,7 +3,7 @@ use std::fs;
 use std::io::{self, Write};
 // Intentionally removed: use std::path::Path;
 
-const NOTES_DIR: &str = "notes";
+pub const NOTES_DIR: &str = "notes";
 
 #[derive(Debug, Clone)]
 pub struct Note {
