@@ -326,66 +326,76 @@ fn open_graph_tab(
     let tabs_clone = open_tabs.clone();
     let click = gtk4::GestureClick::new();
     click.connect_released(move |_, _n, x, y| {
-        let st = click_state.borrow();
-        let pan_x = st.pan_x + click_area.width() as f64 / 2.0;
-        let pan_y = st.pan_y + click_area.height() as f64 / 2.0;
-        let gx = (x as f64 - pan_x) / st.scale;
-        let gy = (y as f64 - pan_y) / st.scale;
+        let note_name_opt = {
+            let st = click_state.borrow();
+            let pan_x = st.pan_x + click_area.width() as f64 / 2.0;
+            let pan_y = st.pan_y + click_area.height() as f64 / 2.0;
+            let gx = (x as f64 - pan_x) / st.scale;
+            let gy = (y as f64 - pan_y) / st.scale;
+            let mut res = None;
+            for (i, node) in st.data.graph.nodes.iter().enumerate() {
+                let (nx, ny) = st.positions[i];
+                let radius = 8.0 + (node.links as f64).sqrt() * 2.0;
+                let dist2 = (gx - nx).powi(2) + (gy - ny).powi(2);
+                if dist2 <= radius.powi(2) {
+                    res = Some(node.name.clone());
+                    break;
+                }
+            }
+            res
+        };
 
-        for (i, node) in st.data.graph.nodes.iter().enumerate() {
-            let (nx, ny) = st.positions[i];
-            let radius = 8.0 + (node.links as f64).sqrt() * 2.0;
-            let dist2 = (gx - nx).powi(2) + (gy - ny).powi(2);
-            if dist2 <= radius.powi(2) {
-                // open note
-                let note_name = node.name.clone();
-                if let Some(term) = tabs_clone.borrow().get(&note_name).cloned() {
-                    if let Some(page) = notebook_clone.page_num(&term) {
-                        notebook_clone.set_current_page(Some(page));
-                        return;
-                    }
-                }
-                let path = format!("{}/{}", NOTES_DIR, note_name);
-                let term = Terminal::new();
-                term.set_hexpand(true);
-                term.set_vexpand(true);
-                term.spawn_async(
-                    PtyFlags::DEFAULT,
-                    None::<&str>,
-                    &["nvim", &path],
-                    &[],
-                    glib::SpawnFlags::SEARCH_PATH,
-                    || {},
-                    -1,
-                    None::<&gio::Cancellable>,
-                    |_| {},
-                );
-                let label = Label::new(Some(&note_name));
-                let close_btn = Button::new();
-                close_btn.set_child(Some(&Image::from_icon_name("window-close-symbolic")));
-                close_btn.set_size_request(16, 16);
-                let tab_box = Box::new(Orientation::Horizontal, 4);
-                tab_box.append(&label);
-                tab_box.append(&close_btn);
-                notebook_clone.append_page(&term, Some(&tab_box));
-                notebook_clone.set_tab_reorderable(&term, true);
-                if let Some(page) = notebook_clone.page_num(&term) {
-                    notebook_clone.set_current_page(Some(page));
-                }
-                let note_key = note_name.clone();
-                let nb_clone = notebook_clone.clone();
-                let tabs_rc = tabs_clone.clone();
-                let term_for_close = term.clone();
-                close_btn.connect_clicked(move |_| {
-                    if let Some(idx) = nb_clone.page_num(&term_for_close) {
-                        nb_clone.remove_page(Some(idx));
-                    }
-                    tabs_rc.borrow_mut().remove(&note_key);
-                });
-                tabs_clone.borrow_mut().insert(note_name, term);
+        let Some(note_name) = note_name_opt else {
+            return;
+        };
+        let path = format!("{}/{}", NOTES_DIR, note_name);
+
+        if let Some(term) = tabs_clone.borrow().get(&note_name).cloned() {
+            if let Some(page) = notebook_clone.page_num(&term) {
+                notebook_clone.set_current_page(Some(page));
                 return;
             }
         }
+
+        let term = Terminal::new();
+        term.set_hexpand(true);
+        term.set_vexpand(true);
+        term.spawn_async(
+            PtyFlags::DEFAULT,
+            None::<&str>,
+            &["nvim", &path],
+            &[],
+            glib::SpawnFlags::SEARCH_PATH,
+            || {},
+            -1,
+            None::<&gio::Cancellable>,
+            |_| {},
+        );
+
+        let label = Label::new(Some(&note_name));
+        let close_btn = Button::new();
+        close_btn.set_child(Some(&Image::from_icon_name("window-close-symbolic")));
+        close_btn.set_size_request(16, 16);
+        let tab_box = Box::new(Orientation::Horizontal, 4);
+        tab_box.append(&label);
+        tab_box.append(&close_btn);
+        notebook_clone.append_page(&term, Some(&tab_box));
+        notebook_clone.set_tab_reorderable(&term, true);
+        if let Some(page) = notebook_clone.page_num(&term) {
+            notebook_clone.set_current_page(Some(page));
+        }
+
+        let note_key = note_name.clone();
+        let nb_clone = notebook_clone.clone();
+        let tabs_rc = tabs_clone.clone();
+        let term_for_close = term.clone();
+        close_btn.connect_clicked(move |_| {
+            if let Some(idx) = nb_clone.page_num(&term_for_close) {
+                nb_clone.remove_page(Some(idx));
+            }
+            tabs_rc.borrow_mut().remove(&note_key);
+        });
+        tabs_clone.borrow_mut().insert(note_name, term);
     });
     area.add_controller(click);
 
