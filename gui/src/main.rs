@@ -10,8 +10,10 @@ use vte4::{PtyFlags, Terminal, TerminalExtManual};
 use notes_core::note::{set_vault_dir, vault_dir};
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::hash::Hasher;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use twox_hash::XxHash64;
 
 fn expand_tilde(path: &str) -> PathBuf {
     #[cfg(unix)]
@@ -31,6 +33,47 @@ fn expand_tilde(path: &str) -> PathBuf {
 
 fn is_text_file(path: &Path) -> bool {
     std::fs::read_to_string(path).is_ok()
+}
+
+fn hash_color(ext: &str) -> (f64, f64, f64) {
+    let mut hasher = XxHash64::with_seed(0);
+    hasher.write(ext.as_bytes());
+    let hash = hasher.finish();
+    let r = ((hash >> 0) & 0xFF) as f64 / 255.0;
+    let g = ((hash >> 8) & 0xFF) as f64 / 255.0;
+    let b = ((hash >> 16) & 0xFF) as f64 / 255.0;
+    (r, g, b)
+}
+
+fn node_color(node: &notes_core::graph::Node) -> (f64, f64, f64) {
+    let mut binaries = Vec::new();
+    let mut texts = Vec::new();
+    let mut has_md = false;
+    for path in &node.paths {
+        if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+            let ext_lc = ext.to_ascii_lowercase();
+            if is_text_file(path) {
+                if ext_lc == "md" {
+                    has_md = true;
+                } else {
+                    texts.push(ext_lc);
+                }
+            } else {
+                binaries.push(ext_lc);
+            }
+        }
+    }
+    binaries.sort();
+    texts.sort();
+    if let Some(ext) = binaries.first() {
+        hash_color(ext)
+    } else if let Some(ext) = texts.first() {
+        hash_color(ext)
+    } else if has_md {
+        hash_color("md")
+    } else {
+        hash_color("md")
+    }
 }
 
 pub fn run_gui() {
@@ -267,6 +310,7 @@ fn open_graph_tab(
         data: notes_core::graph::GraphData,
         positions: Vec<(f64, f64)>,
         velocities: Vec<(f64, f64)>,
+        colors: Vec<(f64, f64, f64)>,
         pan_x: f64,
         pan_y: f64,
         scale: f64,
@@ -277,10 +321,12 @@ fn open_graph_tab(
         state.data = load_graph_data();
         let n = state.data.graph.nodes.len();
         state.positions.clear();
+        state.colors.clear();
         for i in 0..n {
             let angle = i as f64 / n.max(1) as f64 * 2.0 * PI;
             let r = 100.0;
             state.positions.push((r * angle.cos(), r * angle.sin()));
+            state.colors.push(node_color(&state.data.graph.nodes[i]));
         }
         state.velocities = vec![(0.0, 0.0); n];
         state.pan_x = 0.0;
@@ -293,6 +339,7 @@ fn open_graph_tab(
         let new_data = load_graph_data();
         let mut new_positions = Vec::new();
         let mut new_velocities = Vec::new();
+        let mut new_colors = Vec::new();
         for node in &new_data.graph.nodes {
             if let Some(idx) = state
                 .data
@@ -307,10 +354,12 @@ fn open_graph_tab(
                 new_positions.push((0.0, 0.0));
                 new_velocities.push((0.0, 0.0));
             }
+            new_colors.push(node_color(node));
         }
         state.data = new_data;
         state.positions = new_positions;
         state.velocities = new_velocities;
+        state.colors = new_colors;
         state.hover = None;
     }
 
@@ -318,6 +367,7 @@ fn open_graph_tab(
         data: load_graph_data(),
         positions: Vec::new(),
         velocities: Vec::new(),
+        colors: Vec::new(),
         pan_x: 0.0,
         pan_y: 0.0,
         scale: 1.0,
@@ -328,6 +378,7 @@ fn open_graph_tab(
         let angle = i as f64 / n.max(1) as f64 * 2.0 * PI;
         let r = 100.0;
         init.positions.push((r * angle.cos(), r * angle.sin()));
+        init.colors.push(node_color(&init.data.graph.nodes[i]));
     }
     init.velocities = vec![(0.0, 0.0); n];
     let state = Rc::new(RefCell::new(init));
@@ -449,10 +500,11 @@ fn open_graph_tab(
             let sy = y * scale + pan_y;
             let radius = 8.0 + (node.links as f64).sqrt() * 2.0;
             ctx.arc(sx, sy, radius * scale.max(0.2), 0.0, 2.0 * PI);
+            let (r, g, b) = st.colors.get(i).copied().unwrap_or((0.2, 0.6, 0.86));
             if st.hover == Some(i) {
                 ctx.set_source_rgb(0.3, 0.7, 1.0);
             } else {
-                ctx.set_source_rgb(0.2, 0.6, 0.86);
+                ctx.set_source_rgb(r, g, b);
             }
             let _ = ctx.fill_preserve();
             ctx.set_source_rgb(0.0, 0.0, 0.0);
