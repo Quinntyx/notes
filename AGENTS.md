@@ -15,3 +15,10 @@ This repository contains a small Rust codebase for a note taking application. Th
 - Commit messages should be short, present tense commands such as "Add graph view" or "Fix editor layout".
 
 These conventions help keep contributions uniform and easy to review.
+
+## UI design
+
+- Tabs should include close buttons and be reorderable. The graph tab stays pinned at the far left and uses an icon label.
+- Graph view actions are image buttons stacked vertically in the bottom-left overlay rather than a top toolbar.
+- Hovered graph nodes are tinted and node labels fade in or out based on zoom level.
+- Prefer popovers for modal interactions to keep the interface lightweight.
