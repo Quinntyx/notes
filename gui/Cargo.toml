@@ -9,3 +9,4 @@ notes-core = { path = "../core" }
 gtk4 = "0.9"
 vte4 = "0.8"
 cairo-rs = "0.20"
+open = "5"

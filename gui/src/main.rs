@@ -4,12 +4,13 @@ use gtk4::{
     Application, ApplicationWindow, Box, Button, DrawingArea, Entry, Image, Label, Notebook,
     Orientation, Overlay, Popover, PositionType, gio, glib,
 };
+use open;
 use vte4::{PtyFlags, Terminal, TerminalExtManual};
 
 use notes_core::note::{set_vault_dir, vault_dir};
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 fn expand_tilde(path: &str) -> PathBuf {
@@ -26,6 +27,10 @@ fn expand_tilde(path: &str) -> PathBuf {
         }
     }
     PathBuf::from(path)
+}
+
+fn is_text_file(path: &Path) -> bool {
+    std::fs::read_to_string(path).is_ok()
 }
 
 pub fn run_gui() {
@@ -162,6 +167,84 @@ fn open_main_window(app: &Application) {
     open_graph_tab(&notebook, &open_tabs, &graph_tab, &graph_cb);
 
     window.show();
+}
+
+fn open_any_path(
+    notebook: &Notebook,
+    open_tabs: &Rc<RefCell<HashMap<String, Terminal>>>,
+    node: &notes_core::graph::Node,
+    path: &Path,
+) {
+    let key = path.to_string_lossy().to_string();
+    if is_text_file(path) {
+        if let Some(term) = open_tabs.borrow().get(&key).cloned() {
+            if let Some(page) = notebook.page_num(&term) {
+                notebook.set_current_page(Some(page));
+                return;
+            }
+        }
+
+        let term = Terminal::new();
+        term.set_hexpand(true);
+        term.set_vexpand(true);
+        term.spawn_async(
+            PtyFlags::DEFAULT,
+            None::<&str>,
+            &["nvim", &key],
+            &[],
+            glib::SpawnFlags::SEARCH_PATH,
+            || {},
+            -1,
+            None::<&gio::Cancellable>,
+            |_| {},
+        );
+
+        let label = Label::new(path.file_name().and_then(|s| s.to_str()));
+        let close_btn = Button::new();
+        close_btn.set_child(Some(&Image::from_icon_name("window-close-symbolic")));
+        close_btn.set_size_request(16, 16);
+        let tab_box = Box::new(Orientation::Horizontal, 4);
+        tab_box.append(&label);
+        tab_box.append(&close_btn);
+
+        let format_bar = Box::new(Orientation::Horizontal, 4);
+        for p in &node.paths {
+            if let Some(ext) = p.extension().and_then(|s| s.to_str()) {
+                let btn = Button::with_label(ext);
+                let nb_clone = notebook.clone();
+                let tabs_clone = open_tabs.clone();
+                let node_clone = node.clone();
+                let p_clone = p.clone();
+                btn.connect_clicked(move |_| {
+                    open_any_path(&nb_clone, &tabs_clone, &node_clone, &p_clone);
+                });
+                format_bar.append(&btn);
+            }
+        }
+
+        let container = Box::new(Orientation::Vertical, 0);
+        container.append(&format_bar);
+        container.append(&term);
+
+        notebook.append_page(&container, Some(&tab_box));
+        notebook.set_tab_reorderable(&container, true);
+        if let Some(page) = notebook.page_num(&container) {
+            notebook.set_current_page(Some(page));
+        }
+
+        let key_clone = key.clone();
+        let nb_clone = notebook.clone();
+        let tabs_rc = open_tabs.clone();
+        close_btn.connect_clicked(move |_| {
+            if let Some(idx) = nb_clone.page_num(&container) {
+                nb_clone.remove_page(Some(idx));
+            }
+            tabs_rc.borrow_mut().remove(&key_clone);
+        });
+        open_tabs.borrow_mut().insert(key, term);
+    } else if let Err(err) = open::that(path) {
+        eprintln!("Failed to open {:?}: {}", path, err);
+    }
 }
 
 fn open_graph_tab(
@@ -382,6 +465,17 @@ fn open_graph_tab(
                 ctx.move_to(sx + offset_x, sy + offset_y);
                 ctx.set_source_rgba(0.0, 0.0, 0.0, label_alpha);
                 let _ = ctx.show_text(&node.name);
+                let formats: Vec<String> = node
+                    .paths
+                    .iter()
+                    .filter_map(|p| p.extension().and_then(|e| e.to_str()).map(String::from))
+                    .collect();
+                if !formats.is_empty() {
+                    let fmt_text = formats.join(", ");
+                    ctx.move_to(sx + offset_x, sy + offset_y + 14.0);
+                    ctx.set_source_rgba(0.3, 0.3, 0.3, label_alpha);
+                    let _ = ctx.show_text(&fmt_text);
+                }
             }
             ctx.new_path();
         }
@@ -480,55 +574,37 @@ fn open_graph_tab(
         let Some(note_name) = note_name_opt else {
             return;
         };
-        let path = vault_dir().join(&note_name);
-        let path_str = path.to_string_lossy();
-
-        if let Some(term) = tabs_clone.borrow().get(&note_name).cloned() {
-            if let Some(page) = notebook_clone.page_num(&term) {
-                notebook_clone.set_current_page(Some(page));
-                return;
+        let mut chosen = None;
+        {
+            let st = click_state.borrow();
+            if let Some(node) = st.data.graph.nodes.iter().find(|n| n.name == note_name) {
+                if let Some(md) = node
+                    .paths
+                    .iter()
+                    .find(|p| p.extension().and_then(|e| e.to_str()) == Some("md"))
+                {
+                    chosen = Some((node.clone(), md.clone()));
+                } else {
+                    let mut text_paths: Vec<_> =
+                        node.paths.iter().filter(|p| is_text_file(p)).collect();
+                    text_paths
+                        .sort_by_key(|p| p.extension().and_then(|s| s.to_str()).unwrap_or(""));
+                    if let Some(p) = text_paths.first() {
+                        chosen = Some((node.clone(), (*p).clone()));
+                    } else if let Some(first) = node.paths.first() {
+                        let new_path = vault_dir().join(format!("{}.md", node.name));
+                        std::fs::File::create(&new_path).ok();
+                        chosen = Some((node.clone(), new_path));
+                    }
+                }
             }
         }
-
-        let term = Terminal::new();
-        term.set_hexpand(true);
-        term.set_vexpand(true);
-        term.spawn_async(
-            PtyFlags::DEFAULT,
-            None::<&str>,
-            &["nvim", &path_str],
-            &[],
-            glib::SpawnFlags::SEARCH_PATH,
-            || {},
-            -1,
-            None::<&gio::Cancellable>,
-            |_| {},
-        );
-
-        let label = Label::new(Some(&note_name));
-        let close_btn = Button::new();
-        close_btn.set_child(Some(&Image::from_icon_name("window-close-symbolic")));
-        close_btn.set_size_request(16, 16);
-        let tab_box = Box::new(Orientation::Horizontal, 4);
-        tab_box.append(&label);
-        tab_box.append(&close_btn);
-        notebook_clone.append_page(&term, Some(&tab_box));
-        notebook_clone.set_tab_reorderable(&term, true);
-        if let Some(page) = notebook_clone.page_num(&term) {
-            notebook_clone.set_current_page(Some(page));
+        if let Some((node, path)) = chosen {
+            open_any_path(&notebook_clone, &tabs_clone, &node, &path);
+            let mut st = click_state.borrow_mut();
+            notes_core::graph::update_open_notes(&mut st.data, &[]);
+            click_area.queue_draw();
         }
-
-        let note_key = note_name.clone();
-        let nb_clone = notebook_clone.clone();
-        let tabs_rc = tabs_clone.clone();
-        let term_for_close = term.clone();
-        close_btn.connect_clicked(move |_| {
-            if let Some(idx) = nb_clone.page_num(&term_for_close) {
-                nb_clone.remove_page(Some(idx));
-            }
-            tabs_rc.borrow_mut().remove(&note_key);
-        });
-        tabs_clone.borrow_mut().insert(note_name, term);
     });
     area.add_controller(click);
 
