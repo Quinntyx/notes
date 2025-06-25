@@ -246,9 +246,10 @@ fn open_graph_tab(
             ctx.set_source_rgb(0.0, 0.0, 0.0);
             let _ = ctx.stroke();
 
-            if show_names {
-                ctx.move_to(sx + 12.0 * scale, sy + 4.0 * scale);
-                ctx.set_source_rgba(0.0, 0.0, 0.0, text_alpha);
+            let label_alpha = if st.hover == Some(i) { 1.0 } else { text_alpha };
+            if st.hover == Some(i) || show_names {
+                ctx.move_to(sx + 12.0, sy + 4.0);
+                ctx.set_source_rgba(0.0, 0.0, 0.0, label_alpha);
                 let _ = ctx.show_text(&node.name);
             }
             ctx.new_path();
