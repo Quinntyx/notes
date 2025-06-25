@@ -21,6 +21,51 @@ pub struct Node {
     pub links: usize,
 }
 
+impl Node {
+    /// Returns true if this logical node only represents directories.
+    pub fn is_directory(&self) -> bool {
+        self.paths.iter().all(|p| p.is_dir())
+    }
+
+    /// Determine the primary file format of this node.
+    ///
+    /// Binary formats have highest priority, followed by text formats in
+    /// alphabetical order. Markdown is only used if no other text format exists.
+    pub fn primary_file_format(&self) -> Option<String> {
+        let mut binaries = Vec::new();
+        let mut texts = Vec::new();
+        let mut has_md = false;
+        for path in &self.paths {
+            if path.is_dir() {
+                continue;
+            }
+            if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+                let ext_lc = ext.to_ascii_lowercase();
+                if is_text_file(path) {
+                    if ext_lc == "md" {
+                        has_md = true;
+                    } else {
+                        texts.push(ext_lc);
+                    }
+                } else {
+                    binaries.push(ext_lc);
+                }
+            }
+        }
+        binaries.sort();
+        texts.sort();
+        if let Some(ext) = binaries.first() {
+            Some(ext.clone())
+        } else if let Some(ext) = texts.first() {
+            Some(ext.clone())
+        } else if has_md {
+            Some("md".into())
+        } else {
+            None
+        }
+    }
+}
+
 fn normalize(s: &str) -> String {
     let mut out = String::new();
     let mut in_space = false;

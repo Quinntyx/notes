@@ -45,32 +45,20 @@ fn hash_color(ext: &str) -> (f64, f64, f64) {
     (r, g, b)
 }
 
+fn lighten_color(r: f64, g: f64, b: f64) -> (f64, f64, f64) {
+    let factor = 0.3;
+    (
+        r + (1.0 - r) * factor,
+        g + (1.0 - g) * factor,
+        b + (1.0 - b) * factor,
+    )
+}
+
 fn node_color(node: &notes_core::graph::Node) -> (f64, f64, f64) {
-    let mut binaries = Vec::new();
-    let mut texts = Vec::new();
-    let mut has_md = false;
-    for path in &node.paths {
-        if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-            let ext_lc = ext.to_ascii_lowercase();
-            if is_text_file(path) {
-                if ext_lc == "md" {
-                    has_md = true;
-                } else {
-                    texts.push(ext_lc);
-                }
-            } else {
-                binaries.push(ext_lc);
-            }
-        }
-    }
-    binaries.sort();
-    texts.sort();
-    if let Some(ext) = binaries.first() {
-        hash_color(ext)
-    } else if let Some(ext) = texts.first() {
-        hash_color(ext)
-    } else if has_md {
-        hash_color("md")
+    if node.is_directory() {
+        (1.0, 1.0, 1.0)
+    } else if let Some(ext) = node.primary_file_format() {
+        hash_color(&ext)
     } else {
         hash_color("md")
     }
@@ -251,18 +239,27 @@ fn open_any_path(
         tab_box.append(&close_btn);
 
         let format_bar = Box::new(Orientation::Horizontal, 4);
-        for p in &node.paths {
-            if let Some(ext) = p.extension().and_then(|s| s.to_str()) {
-                let btn = Button::with_label(ext);
-                let nb_clone = notebook.clone();
-                let tabs_clone = open_tabs.clone();
-                let node_clone = node.clone();
-                let p_clone = p.clone();
-                btn.connect_clicked(move |_| {
-                    open_any_path(&nb_clone, &tabs_clone, &node_clone, &p_clone);
-                });
-                format_bar.append(&btn);
-            }
+        let mut exts: Vec<(String, PathBuf)> = node
+            .paths
+            .iter()
+            .filter_map(|p| {
+                p.extension()
+                    .and_then(|s| s.to_str())
+                    .map(|e| (e.to_ascii_uppercase(), p.clone()))
+            })
+            .collect();
+        exts.sort_by(|a, b| a.0.cmp(&b.0));
+        exts.dedup_by(|a, b| a.0 == b.0);
+        for (ext_u, path_u) in exts {
+            let btn = Button::with_label(&ext_u);
+            let nb_clone = notebook.clone();
+            let tabs_clone = open_tabs.clone();
+            let node_clone = node.clone();
+            let path_clone = path_u.clone();
+            btn.connect_clicked(move |_| {
+                open_any_path(&nb_clone, &tabs_clone, &node_clone, &path_clone);
+            });
+            format_bar.append(&btn);
         }
 
         let container = Box::new(Orientation::Vertical, 0);
@@ -499,29 +496,54 @@ fn open_graph_tab(
             let sx = x * scale + pan_x;
             let sy = y * scale + pan_y;
             let radius = 8.0 + (node.links as f64).sqrt() * 2.0;
-            ctx.arc(sx, sy, radius * scale.max(0.2), 0.0, 2.0 * PI);
             let (r, g, b) = st.colors.get(i).copied().unwrap_or((0.2, 0.6, 0.86));
-            if st.hover == Some(i) {
-                ctx.set_source_rgb(0.3, 0.7, 1.0);
+            if node.is_directory() {
+                let fill = if st.hover == Some(i) {
+                    (0.9, 0.9, 0.9)
+                } else {
+                    (1.0, 1.0, 1.0)
+                };
+                ctx.arc(sx, sy, radius * scale.max(0.2), 0.0, 2.0 * PI);
+                ctx.set_source_rgb(fill.0, fill.1, fill.2);
+                let _ = ctx.fill_preserve();
+                ctx.set_source_rgb(0.0, 0.0, 0.0);
+                let _ = ctx.stroke();
+                ctx.arc(sx, sy, radius * scale.max(0.2) * 0.4, 0.0, 2.0 * PI);
+                ctx.set_source_rgb(0.0, 0.0, 0.0);
+                let _ = ctx.fill();
+                ctx.new_path();
             } else {
-                ctx.set_source_rgb(r, g, b);
+                ctx.arc(sx, sy, radius * scale.max(0.2), 0.0, 2.0 * PI);
+                if st.hover == Some(i) {
+                    let (lr, lg, lb) = lighten_color(r, g, b);
+                    ctx.set_source_rgb(lr, lg, lb);
+                } else {
+                    ctx.set_source_rgb(r, g, b);
+                }
+                let _ = ctx.fill_preserve();
+                ctx.set_source_rgb(0.0, 0.0, 0.0);
+                let _ = ctx.stroke();
             }
-            let _ = ctx.fill_preserve();
-            ctx.set_source_rgb(0.0, 0.0, 0.0);
-            let _ = ctx.stroke();
 
             let label_alpha = if st.hover == Some(i) { 1.0 } else { text_alpha };
             if st.hover == Some(i) || show_names {
                 let offset_x = radius * scale + 8.0;
-                let offset_y = 4.0 * scale;
+                let offset_y = -2.0 * scale;
                 ctx.move_to(sx + offset_x, sy + offset_y);
                 ctx.set_source_rgba(0.0, 0.0, 0.0, label_alpha);
                 let _ = ctx.show_text(&node.name);
                 let formats: Vec<String> = node
                     .paths
                     .iter()
-                    .filter_map(|p| p.extension().and_then(|e| e.to_str()).map(String::from))
-                    .collect();
+                    .filter_map(|p| {
+                        p.extension()
+                            .and_then(|e| e.to_str())
+                            .map(|s| s.to_ascii_uppercase())
+                    })
+                    .collect::<Vec<_>>();
+                let mut formats = formats;
+                formats.sort();
+                formats.dedup();
                 if !formats.is_empty() {
                     let fmt_text = formats.join(", ");
                     ctx.move_to(sx + offset_x, sy + offset_y + 14.0);
