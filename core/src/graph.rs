@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::PathBuf;
 
-use crate::note::NOTES_DIR;
+use crate::note::vault_dir;
 
 #[derive(Debug)]
 pub struct Graph {
@@ -100,7 +100,7 @@ pub fn build_graph() -> Graph {
     let mut normalized = Vec::new();
     let mut index_map: HashMap<String, usize> = HashMap::new();
 
-    if let Ok(entries) = fs::read_dir(NOTES_DIR) {
+    if let Ok(entries) = fs::read_dir(vault_dir()) {
         for entry in entries.flatten() {
             let path = entry.path();
             if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
@@ -203,7 +203,7 @@ pub fn load_graph_data() -> GraphData {
     let mut normalized = Vec::new();
     let mut contents = Vec::new();
 
-    if let Ok(entries) = fs::read_dir(NOTES_DIR) {
+    if let Ok(entries) = fs::read_dir(vault_dir()) {
         for entry in entries.flatten() {
             let path = entry.path();
             if let (Some(stem), Some(filename)) = (

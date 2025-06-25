@@ -12,3 +12,4 @@ name = "notes"
 path = "src/main.rs"
 
 [dependencies]
+once_cell = "1"

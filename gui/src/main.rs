@@ -6,7 +6,27 @@ use gtk4::{
 };
 use vte4::{PtyFlags, Terminal, TerminalExtManual};
 
-use notes_core::note::NOTES_DIR;
+use notes_core::note::{set_vault_dir, vault_dir};
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::rc::Rc;
+
+fn expand_tilde(path: &str) -> PathBuf {
+    #[cfg(unix)]
+    {
+        if path == "~" {
+            if let Some(home) = std::env::var_os("HOME") {
+                return PathBuf::from(home);
+            }
+        } else if let Some(rest) = path.strip_prefix("~/") {
+            if let Some(home) = std::env::var_os("HOME") {
+                return PathBuf::from(home).join(rest);
+            }
+        }
+    }
+    PathBuf::from(path)
+}
 
 pub fn run_gui() {
     let app = Application::builder()
@@ -14,69 +34,114 @@ pub fn run_gui() {
         .build();
 
     app.connect_activate(|app| {
-        use std::cell::RefCell;
-        use std::collections::HashMap;
-        use std::rc::Rc;
+        show_dashboard(app);
+    });
 
-        let notebook = Notebook::new();
-        notebook.set_hexpand(true);
-        notebook.set_vexpand(true);
+    // Pass an empty argument list to avoid `g_application_open` from
+    // interpreting leftover command line arguments as files to open.
+    // This prevents warnings about missing file handlers when running
+    // `cargo run gui` from the CLI.
+    app.run_with_args::<&str>(&[]);
+}
 
-        let open_tabs: Rc<RefCell<HashMap<String, Terminal>>> =
-            Rc::new(RefCell::new(HashMap::new()));
-        let graph_tab: Rc<RefCell<Option<Overlay>>> = Rc::new(RefCell::new(None));
-        let graph_cb: Rc<RefCell<Option<std::boxed::Box<dyn Fn(String)>>>> =
-            Rc::new(RefCell::new(None));
+fn show_dashboard(app: &Application) {
+    let window = ApplicationWindow::builder()
+        .application(app)
+        .title("Select Vault")
+        .default_width(400)
+        .default_height(200)
+        .build();
 
-        let menu = gio::Menu::new();
-        let file_menu = gio::Menu::new();
-        file_menu.append(Some("New Note"), Some("app.new_note"));
-        file_menu.append(Some("Close Tab"), Some("app.close_tab"));
-        file_menu.append(Some("Quit"), Some("app.quit"));
-        menu.append_submenu(Some("File"), &file_menu);
-        let menu_bar = gtk4::PopoverMenuBar::from_model(Some(&menu));
+    let entry = Entry::new();
+    entry.set_hexpand(true);
+    entry.set_placeholder_text(Some("Vault directory"));
+    let button = Button::with_label("Open Vault");
+    let vbox = Box::new(Orientation::Vertical, 5);
+    vbox.set_margin_top(12);
+    vbox.set_margin_bottom(12);
+    vbox.set_margin_start(12);
+    vbox.set_margin_end(12);
+    vbox.append(&entry);
+    vbox.append(&button);
+    window.set_child(Some(&vbox));
 
-        let vbox = Box::new(Orientation::Vertical, 0);
-        vbox.append(&menu_bar);
-        vbox.append(&notebook);
+    button.connect_clicked(
+        glib::clone!(@weak window, @weak app, @weak entry => move |_| {
+            let path_str = entry.text();
+            if !path_str.is_empty() {
+                let dir = expand_tilde(path_str.as_str());
+                set_vault_dir(dir);
+                window.close();
+                open_main_window(&app);
+            }
+        }),
+    );
+    window.show();
+}
 
-        let window = ApplicationWindow::builder()
-            .application(app)
-            .title("Notes GUI")
-            .default_width(800)
-            .default_height(600)
-            .child(&vbox)
-            .build();
+fn open_main_window(app: &Application) {
+    let notebook = Notebook::new();
+    notebook.set_hexpand(true);
+    notebook.set_vexpand(true);
 
-        let app_clone = app.clone();
-        app.add_action_entries(vec![
-            gio::ActionEntry::builder("new_note")
-                .activate(glib::clone!(@weak window, @weak graph_cb => move |_, _, _| {
+    let open_tabs: Rc<RefCell<HashMap<String, Terminal>>> = Rc::new(RefCell::new(HashMap::new()));
+    let graph_tab: Rc<RefCell<Option<Overlay>>> = Rc::new(RefCell::new(None));
+    let graph_cb: Rc<RefCell<Option<std::boxed::Box<dyn Fn(String)>>>> =
+        Rc::new(RefCell::new(None));
+
+    let menu = gio::Menu::new();
+    let file_menu = gio::Menu::new();
+    file_menu.append(Some("New Note"), Some("app.new_note"));
+    file_menu.append(Some("Close Tab"), Some("app.close_tab"));
+    file_menu.append(Some("Quit"), Some("app.quit"));
+    menu.append_submenu(Some("File"), &file_menu);
+    let menu_bar = gtk4::PopoverMenuBar::from_model(Some(&menu));
+
+    let vbox = Box::new(Orientation::Vertical, 0);
+    vbox.append(&menu_bar);
+    vbox.append(&notebook);
+
+    let window = ApplicationWindow::builder()
+        .application(app)
+        .title("Notes GUI")
+        .default_width(800)
+        .default_height(600)
+        .child(&vbox)
+        .build();
+
+    let app_clone = app.clone();
+    app.add_action_entries(vec![
+        gio::ActionEntry::builder("new_note")
+            .activate(
+                glib::clone!(@weak window, @weak graph_cb => move |_, _, _| {
                     show_new_note_popover(&window, &graph_cb);
-                }))
-                .build(),
-            gio::ActionEntry::builder("close_tab")
-                .activate(glib::clone!(@weak notebook, @weak open_tabs, @weak graph_tab => move |_,_,_| {
+                }),
+            )
+            .build(),
+        gio::ActionEntry::builder("close_tab")
+            .activate(
+                glib::clone!(@weak notebook, @weak open_tabs, @weak graph_tab => move |_,_,_| {
                     close_current_tab(&notebook, &open_tabs, &graph_tab);
-                }))
-                .build(),
-            gio::ActionEntry::builder("quit")
-                .activate(move |app: &Application, _, _| {
-                    app.quit();
-                })
-                .build(),
-        ]);
+                }),
+            )
+            .build(),
+        gio::ActionEntry::builder("quit")
+            .activate(move |app: &Application, _, _| {
+                app.quit();
+            })
+            .build(),
+    ]);
 
-        app.set_accels_for_action("app.new_note", &["<Primary>n"]);
-        app.set_accels_for_action("app.close_tab", &["<Primary>w"]);
-        if cfg!(target_os = "macos") {
-            app.set_accels_for_action("app.quit", &["<Primary>q"]);
-        }
+    app.set_accels_for_action("app.new_note", &["<Primary>n"]);
+    app.set_accels_for_action("app.close_tab", &["<Primary>w"]);
+    if cfg!(target_os = "macos") {
+        app.set_accels_for_action("app.quit", &["<Primary>q"]);
+    }
 
-        let key_controller = gtk4::EventControllerKey::builder()
-            .propagation_phase(gtk4::PropagationPhase::Capture)
-            .build();
-        key_controller.connect_key_pressed(glib::clone!(@weak app_clone => @default-return glib::Propagation::Proceed, move |_, key, _code, state| {
+    let key_controller = gtk4::EventControllerKey::builder()
+        .propagation_phase(gtk4::PropagationPhase::Capture)
+        .build();
+    key_controller.connect_key_pressed(glib::clone!(@weak app_clone => @default-return glib::Propagation::Proceed, move |_, key, _code, state| {
             let modifier = if cfg!(target_os = "macos") { gdk::ModifierType::META_MASK } else { gdk::ModifierType::CONTROL_MASK };
             if state.contains(modifier) {
                 if key == gdk::Key::n {
@@ -92,23 +157,12 @@ pub fn run_gui() {
             }
             glib::Propagation::Proceed
         }));
-        window.add_controller(key_controller);
+    window.add_controller(key_controller);
 
-        open_graph_tab(&notebook, &open_tabs, &graph_tab, &graph_cb);
+    open_graph_tab(&notebook, &open_tabs, &graph_tab, &graph_cb);
 
-        window.show();
-    });
-
-    // Pass an empty argument list to avoid `g_application_open` from
-    // interpreting leftover command line arguments as files to open.
-    // This prevents warnings about missing file handlers when running
-    // `cargo run gui` from the CLI.
-    app.run_with_args::<&str>(&[]);
+    window.show();
 }
-
-use std::cell::RefCell;
-use std::collections::HashMap;
-use std::rc::Rc;
 
 fn open_graph_tab(
     notebook: &Notebook,
@@ -426,7 +480,8 @@ fn open_graph_tab(
         let Some(note_name) = note_name_opt else {
             return;
         };
-        let path = format!("{}/{}", NOTES_DIR, note_name);
+        let path = vault_dir().join(&note_name);
+        let path_str = path.to_string_lossy();
 
         if let Some(term) = tabs_clone.borrow().get(&note_name).cloned() {
             if let Some(page) = notebook_clone.page_num(&term) {
@@ -441,7 +496,7 @@ fn open_graph_tab(
         term.spawn_async(
             PtyFlags::DEFAULT,
             None::<&str>,
-            &["nvim", &path],
+            &["nvim", &path_str],
             &[],
             glib::SpawnFlags::SEARCH_PATH,
             || {},
@@ -633,5 +688,14 @@ fn close_current_tab(
 }
 
 fn main() {
+    if std::env::var("GSETTINGS_BACKEND")
+        .ok()
+        .filter(|v| !v.is_empty())
+        .is_none()
+    {
+        unsafe {
+            std::env::set_var("GSETTINGS_BACKEND", "memory");
+        }
+    }
     run_gui();
 }
