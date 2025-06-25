@@ -25,6 +25,8 @@ pub fn run_gui() {
         let open_tabs: Rc<RefCell<HashMap<String, Terminal>>> =
             Rc::new(RefCell::new(HashMap::new()));
         let graph_tab: Rc<RefCell<Option<Overlay>>> = Rc::new(RefCell::new(None));
+        let graph_cb: Rc<RefCell<Option<std::boxed::Box<dyn Fn(String)>>>> =
+            Rc::new(RefCell::new(None));
 
         let menu = gio::Menu::new();
         let file_menu = gio::Menu::new();
@@ -49,8 +51,8 @@ pub fn run_gui() {
         let app_clone = app.clone();
         app.add_action_entries(vec![
             gio::ActionEntry::builder("new_note")
-                .activate(glib::clone!(@weak window => move |_,_,_| {
-                    show_new_note_popover(&window);
+                .activate(glib::clone!(@weak window, @weak graph_cb => move |_, _, _| {
+                    show_new_note_popover(&window, &graph_cb);
                 }))
                 .build(),
             gio::ActionEntry::builder("close_tab")
@@ -92,7 +94,7 @@ pub fn run_gui() {
         }));
         window.add_controller(key_controller);
 
-        open_graph_tab(&notebook, &open_tabs, &graph_tab);
+        open_graph_tab(&notebook, &open_tabs, &graph_tab, &graph_cb);
 
         window.show();
     });
@@ -112,6 +114,7 @@ fn open_graph_tab(
     notebook: &Notebook,
     open_tabs: &Rc<RefCell<HashMap<String, Terminal>>>,
     graph_tab: &Rc<RefCell<Option<Overlay>>>,
+    graph_cb: &Rc<RefCell<Option<std::boxed::Box<dyn Fn(String)>>>>,
 ) {
     use crate::graph::{load_graph_data, update_open_notes};
     use std::f64::consts::PI;
@@ -196,6 +199,14 @@ fn open_graph_tab(
     area.set_hexpand(true);
     area.set_vexpand(true);
 
+    let cb_state = state.clone();
+    let cb_area = area.clone();
+    *graph_cb.borrow_mut() = Some(std::boxed::Box::new(move |title: String| {
+        let mut st = cb_state.borrow_mut();
+        add_node_to_state(&mut st, &title);
+        cb_area.queue_draw();
+    }));
+
     let container = Overlay::new();
     container.set_hexpand(true);
     container.set_vexpand(true);
@@ -223,8 +234,7 @@ fn open_graph_tab(
         home_area.queue_draw();
     });
 
-    let new_state = state.clone();
-    let new_area = area.clone();
+    let cb_clone = graph_cb.clone();
     new_button.connect_clicked(move |btn| {
         let pop = Popover::new();
         pop.set_has_arrow(true);
@@ -239,18 +249,16 @@ fn open_graph_tab(
         pop.set_parent(btn);
         pop.popup();
 
-        let st_rc = new_state.clone();
-        let area_clone = new_area.clone();
         let pop_clone = pop.clone();
         let entry_clone = entry.clone();
+        let cb_inner = cb_clone.clone();
         let do_create = Rc::new(move || {
             let title = entry_clone.text().to_string();
             if !title.is_empty() {
-                let note = crate::note::Note::new(title.clone(), String::new(), None);
-                let _ = note.save();
-                let mut st = st_rc.borrow_mut();
-                add_node_to_state(&mut st, &title);
-                area_clone.queue_draw();
+                create_new_note(&title);
+                if let Some(cb) = &*cb_inner.borrow() {
+                    cb(title.clone());
+                }
             }
             pop_clone.popdown();
         });
@@ -545,7 +553,15 @@ fn open_graph_tab(
     *graph_tab.borrow_mut() = Some(container);
 }
 
-fn show_new_note_popover(window: &ApplicationWindow) {
+fn create_new_note(title: &str) {
+    let note = crate::note::Note::new(title.to_string(), String::new(), None);
+    let _ = note.save();
+}
+
+fn show_new_note_popover(
+    window: &ApplicationWindow,
+    graph_cb: &Rc<RefCell<Option<std::boxed::Box<dyn Fn(String)>>>>,
+) {
     let pop = Popover::new();
     pop.set_has_arrow(false);
     pop.set_autohide(true);
@@ -567,11 +583,14 @@ fn show_new_note_popover(window: &ApplicationWindow) {
 
     let pop_clone = pop.clone();
     let entry_clone = entry.clone();
+    let cb_clone = graph_cb.clone();
     let do_create = Rc::new(move || {
         let title = entry_clone.text().to_string();
         if !title.is_empty() {
-            let note = crate::note::Note::new(title.clone(), String::new(), None);
-            let _ = note.save();
+            create_new_note(&title);
+            if let Some(cb) = &*cb_clone.borrow() {
+                cb(title.clone());
+            }
         }
         pop_clone.popdown();
     });
