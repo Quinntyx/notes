@@ -205,6 +205,7 @@ fn open_graph_tab(
 
         ctx.set_source_rgb(1.0, 1.0, 1.0);
         ctx.paint().unwrap();
+        ctx.set_font_size(13.0);
 
         if graph.nodes.is_empty() {
             return;
@@ -248,7 +249,9 @@ fn open_graph_tab(
 
             let label_alpha = if st.hover == Some(i) { 1.0 } else { text_alpha };
             if st.hover == Some(i) || show_names {
-                ctx.move_to(sx + 12.0, sy + 4.0);
+                let offset_x = radius * scale + 8.0;
+                let offset_y = 4.0 * scale;
+                ctx.move_to(sx + offset_x, sy + offset_y);
                 ctx.set_source_rgba(0.0, 0.0, 0.0, label_alpha);
                 let _ = ctx.show_text(&node.name);
             }

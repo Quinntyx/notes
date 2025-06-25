@@ -22,3 +22,5 @@ These conventions help keep contributions uniform and easy to review.
 - Graph view actions are image buttons stacked vertically in the bottom-left overlay rather than a top toolbar.
 - Hovered graph nodes are tinted and node labels fade in or out based on zoom level.
 - Prefer popovers for modal interactions to keep the interface lightweight.
+- Keep node label text size constant as you zoom; offset labels outward relative
+  to zoom so they don't overlap the nodes.
