@@ -45,7 +45,6 @@ pub fn run_gui() {
         let notebook = Notebook::new();
         notebook.set_hexpand(true);
         notebook.set_vexpand(true);
-        main_box.append(&notebook);
 
         // button to open graph view
         let graph_button = Button::with_label("Graph");
@@ -55,7 +54,9 @@ pub fn run_gui() {
         });
         side_box.append(&graph_button);
 
+        // add side box first so it appears on the left
         main_box.append(&side_box);
+        main_box.append(&notebook);
 
         // track open tabs so we don't spawn editors twice
         use std::cell::RefCell;
