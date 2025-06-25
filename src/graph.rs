@@ -7,6 +7,7 @@ use crate::note::NOTES_DIR;
 #[derive(Debug)]
 pub struct Graph {
     pub nodes: Vec<Node>,
+    /// Directed edges using node indices (from -> to)
     pub edges: Vec<(usize, usize)>,
 }
 
@@ -39,13 +40,17 @@ pub fn build_graph() -> Graph {
                         .unwrap_or_default()
                         .to_string();
                     let idx = nodes.len();
-                    nodes.push(Node { name, path: path.clone() });
+                    nodes.push(Node {
+                        name,
+                        path: path.clone(),
+                    });
                     index_map.insert(canonical, idx);
                 }
             }
         }
     }
 
+    // store directed edges using indices
     let mut edges: HashSet<(usize, usize)> = HashSet::new();
 
     for (canon, &i) in &index_map {
@@ -57,12 +62,14 @@ pub fn build_graph() -> Graph {
                     continue;
                 }
                 if text.contains(other_canon) {
-                    let (a, b) = if i < j { (i, j) } else { (j, i) };
-                    edges.insert((a, b));
+                    edges.insert((i, j));
                 }
             }
         }
     }
 
-    Graph { nodes, edges: edges.into_iter().collect() }
+    Graph {
+        nodes,
+        edges: edges.into_iter().collect(),
+    }
 }

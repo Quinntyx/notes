@@ -1,7 +1,7 @@
 use gtk4::prelude::*;
 use gtk4::{
-    Application, ApplicationWindow, Box, Button, DrawingArea, Label, ListBox, ListBoxRow,
-    Notebook, Orientation, ScrolledWindow, gio, glib,
+    Application, ApplicationWindow, Box, Button, DrawingArea, Label, ListBox, ListBoxRow, Notebook,
+    Orientation, ScrolledWindow, gio, glib,
 };
 use vte4::{PtyFlags, Terminal, TerminalExtManual};
 
@@ -154,12 +154,29 @@ fn open_graph_window(app: &Application) {
         }
 
         ctx.set_source_rgb(0.6, 0.6, 0.6);
-        for &(a, b) in &graph.edges {
-            let (sx, sy) = positions[a];
-            let (tx, ty) = positions[b];
+        ctx.set_line_width(1.0);
+        for &(from, to) in &graph.edges {
+            let (sx, sy) = positions[from];
+            let (tx, ty) = positions[to];
             ctx.move_to(sx, sy);
             ctx.line_to(tx, ty);
             let _ = ctx.stroke();
+
+            // draw arrow head
+            let angle = (ty - sy).atan2(tx - sx);
+            let arrow_len = 10.0;
+            let arrow_ang = std::f64::consts::PI / 8.0; // 22.5 deg
+            let lx = tx - arrow_len * (angle - arrow_ang).cos();
+            let ly = ty - arrow_len * (angle - arrow_ang).sin();
+            let rx = tx - arrow_len * (angle + arrow_ang).cos();
+            let ry = ty - arrow_len * (angle + arrow_ang).sin();
+
+            ctx.move_to(lx, ly);
+            ctx.line_to(tx, ty);
+            ctx.line_to(rx, ry);
+            ctx.close_path();
+            let _ = ctx.fill();
+            ctx.new_path();
         }
 
         for (i, node) in graph.nodes.iter().enumerate() {
