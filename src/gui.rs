@@ -7,6 +7,7 @@ use crate::note::{NOTES_DIR};
 pub fn run_gui() {
     let app = Application::builder()
         .application_id("com.example.notes")
+        .flags(gio::ApplicationFlags::HANDLES_OPEN)
         .build();
 
     app.connect_activate(|app| {
