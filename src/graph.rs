@@ -25,17 +25,47 @@ fn canonicalize(s: &str) -> String {
         .flat_map(|c| c.to_lowercase())
         .collect::<String>()
 }
+fn find_unique_links(text: &str, names: &[String]) -> Vec<usize> {
+    let mut result = Vec::new();
+    for (i, name_i) in names.iter().enumerate() {
+        let mut search_start = 0;
+        let mut found = false;
+        while let Some(pos) = text[search_start..].find(name_i) {
+            let idx = search_start + pos;
+            let mut overshadowed = false;
+            for (j, name_j) in names.iter().enumerate() {
+                if i == j {
+                    continue;
+                }
+                if name_j.starts_with(name_i) && text[idx..].starts_with(name_j) {
+                    overshadowed = true;
+                    break;
+                }
+            }
+            if !overshadowed {
+                found = true;
+                break;
+            }
+            search_start = idx + 1;
+        }
+        if found {
+            result.push(i);
+        }
+    }
+    result
+}
 
 pub fn build_graph() -> Graph {
     let mut nodes = Vec::new();
+    let mut canonical = Vec::new();
     let mut index_map: HashMap<String, usize> = HashMap::new();
 
     if let Ok(entries) = fs::read_dir(NOTES_DIR) {
         for entry in entries.flatten() {
             let path = entry.path();
             if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-                let canonical = canonicalize(stem);
-                if !index_map.contains_key(&canonical) {
+                let canon = canonicalize(stem);
+                if !index_map.contains_key(&canon) {
                     let name = path
                         .file_name()
                         .and_then(|n| n.to_str())
@@ -47,7 +77,8 @@ pub fn build_graph() -> Graph {
                         path: path.clone(),
                         links: 0,
                     });
-                    index_map.insert(canonical, idx);
+                    index_map.insert(canon.clone(), idx);
+                    canonical.push(canon);
                 }
             }
         }
@@ -56,17 +87,15 @@ pub fn build_graph() -> Graph {
     // store directed edges using indices
     let mut edges: HashSet<(usize, usize)> = HashSet::new();
 
-    for (canon, &i) in &index_map {
+    for i in 0..nodes.len() {
         let path = &nodes[i].path;
         if let Ok(content) = fs::read_to_string(path) {
             let text = canonicalize(&content);
-            for (other_canon, &j) in &index_map {
-                if canon == other_canon {
+            for j in find_unique_links(&text, &canonical) {
+                if i == j {
                     continue;
                 }
-                if text.contains(other_canon) {
-                    edges.insert((i, j));
-                }
+                edges.insert((i, j));
             }
         }
     }
@@ -103,13 +132,11 @@ fn recompute_edges(data: &mut GraphData) {
     let mut edges: HashSet<(usize, usize)> = HashSet::new();
     for i in 0..n {
         let text = &data.contents[i];
-        for j in 0..n {
+        for j in find_unique_links(text, &data.canonical) {
             if i == j {
                 continue;
             }
-            if text.contains(&data.canonical[j]) {
-                edges.insert((i, j));
-            }
+            edges.insert((i, j));
         }
     }
 
