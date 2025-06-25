@@ -3,6 +3,7 @@ use std::process;
 
 // Declare note as a module
 mod note;
+mod gui;
 use note::Note;
 
 fn main() {
@@ -33,6 +34,9 @@ fn main() {
             }
             let title = args[2..].join(" "); // Allow titles with spaces
             handle_show_note(&title);
+        }
+        "gui" => {
+            gui::run_gui();
         }
         _ => {
             println!("Error: Unknown command '{}'", command);
@@ -78,6 +82,7 @@ fn print_usage() {
     println!("Commands:");
     println!("  new <title>      Create a new note with the given title.");
     println!("  show <title>     Show the content of the note with the given title.");
+    println!("  gui              Launch graphical editor.");
     // Future commands:
     // println!("  edit <title>     Open the note with the given title for editing.");
     // println!("  list             List all available notes.");
