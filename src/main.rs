@@ -2,9 +2,9 @@ use std::env;
 use std::process;
 
 // Declare note as a module
-mod note;
-mod gui;
 mod graph;
+mod gui;
+mod note;
 use note::Note;
 
 fn main() {

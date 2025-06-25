@@ -1,6 +1,6 @@
-use std::path::PathBuf;
 use std::fs;
 use std::io::{self, Write};
+use std::path::PathBuf;
 // Intentionally removed: use std::path::Path;
 
 pub const NOTES_DIR: &str = "notes";
@@ -34,10 +34,14 @@ impl Note {
 
     pub fn load(path: &PathBuf) -> io::Result<Self> {
         if !path.exists() {
-            return Err(io::Error::new(io::ErrorKind::NotFound, "Note file not found"));
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                "Note file not found",
+            ));
         }
         let content = fs::read_to_string(path)?;
-        let title = path.file_stem()
+        let title = path
+            .file_stem()
             .and_then(|stem| stem.to_str())
             .map(String::from)
             .unwrap_or_else(|| "Untitled".to_string());
