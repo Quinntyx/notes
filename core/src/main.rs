@@ -1,11 +1,7 @@
 use std::env;
-use std::process;
+use std::process::{self, Command};
 
-// Declare note as a module
-mod graph;
-mod gui;
-mod note;
-use note::Note;
+use notes_core::note::Note;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -37,7 +33,12 @@ fn main() {
             handle_show_note(&title);
         }
         "gui" => {
-            gui::run_gui();
+            let exe =
+                env::var("CARGO_BIN_EXE_notes-gui").unwrap_or_else(|_| "notes-gui".to_string());
+            if let Err(e) = Command::new(exe).status() {
+                eprintln!("Failed to launch GUI: {}", e);
+                process::exit(1);
+            }
         }
         _ => {
             println!("Error: Unknown command '{}'", command);

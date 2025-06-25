@@ -1,0 +1,10 @@
+[package]
+name = "notes-gui"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+notes-core = { path = "../core" }
+gtk4 = "0.9"
+vte4 = "0.8"
+cairo-rs = "0.20"
