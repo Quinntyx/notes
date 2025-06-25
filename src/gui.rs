@@ -1,7 +1,7 @@
 use gtk4::prelude::*;
 use gtk4::{
-    Application, ApplicationWindow, Box, Button, Dialog, DialogFlags, DrawingArea, Entry, Label,
-    Notebook, Orientation, gio, glib,
+    Application, ApplicationWindow, Box, Button, DrawingArea, Entry, Image, Label, Notebook,
+    Orientation, Overlay, Popover, PositionType, gio, glib,
 };
 use vte4::{PtyFlags, Terminal, TerminalExtManual};
 
@@ -23,7 +23,7 @@ pub fn run_gui() {
 
         let open_tabs: Rc<RefCell<HashMap<String, Terminal>>> =
             Rc::new(RefCell::new(HashMap::new()));
-        let graph_tab: Rc<RefCell<Option<Box>>> = Rc::new(RefCell::new(None));
+        let graph_tab: Rc<RefCell<Option<Overlay>>> = Rc::new(RefCell::new(None));
 
         let window = ApplicationWindow::builder()
             .application(app)
@@ -52,7 +52,7 @@ use std::rc::Rc;
 fn open_graph_tab(
     notebook: &Notebook,
     open_tabs: &Rc<RefCell<HashMap<String, Terminal>>>,
-    graph_tab: &Rc<RefCell<Option<Box>>>,
+    graph_tab: &Rc<RefCell<Option<Overlay>>>,
     window: &ApplicationWindow,
 ) {
     use crate::graph::{load_graph_data, update_open_notes};
@@ -72,6 +72,7 @@ fn open_graph_tab(
         pan_x: f64,
         pan_y: f64,
         scale: f64,
+        hover: Option<usize>,
     }
 
     fn reset_state(state: &mut GraphState) {
@@ -87,6 +88,32 @@ fn open_graph_tab(
         state.pan_x = 0.0;
         state.pan_y = 0.0;
         state.scale = 1.0;
+        state.hover = None;
+    }
+
+    fn add_node_to_state(state: &mut GraphState, _title: &str) {
+        let new_data = load_graph_data();
+        let mut new_positions = Vec::new();
+        let mut new_velocities = Vec::new();
+        for node in &new_data.graph.nodes {
+            if let Some(idx) = state
+                .data
+                .graph
+                .nodes
+                .iter()
+                .position(|n| n.name == node.name)
+            {
+                new_positions.push(state.positions[idx]);
+                new_velocities.push(state.velocities[idx]);
+            } else {
+                new_positions.push((0.0, 0.0));
+                new_velocities.push((0.0, 0.0));
+            }
+        }
+        state.data = new_data;
+        state.positions = new_positions;
+        state.velocities = new_velocities;
+        state.hover = None;
     }
 
     let mut init = GraphState {
@@ -96,6 +123,7 @@ fn open_graph_tab(
         pan_x: 0.0,
         pan_y: 0.0,
         scale: 1.0,
+        hover: None,
     };
     let n = init.data.graph.nodes.len();
     for i in 0..n {
@@ -110,14 +138,24 @@ fn open_graph_tab(
     area.set_hexpand(true);
     area.set_vexpand(true);
 
-    let container = Box::new(Orientation::Vertical, 5);
-    let toolbar = Box::new(Orientation::Horizontal, 5);
-    let home_button = Button::with_label("Home");
-    let new_button = Button::with_label("New Note");
-    toolbar.append(&home_button);
-    toolbar.append(&new_button);
-    container.append(&toolbar);
-    container.append(&area);
+    let container = Overlay::new();
+    container.set_hexpand(true);
+    container.set_vexpand(true);
+    container.set_child(Some(&area));
+
+    let button_box = Box::new(Orientation::Vertical, 5);
+    button_box.set_halign(gtk4::Align::Start);
+    button_box.set_valign(gtk4::Align::End);
+
+    let home_button = Button::new();
+    home_button.set_child(Some(&Image::from_icon_name("go-home-symbolic")));
+    home_button.set_size_request(40, 40);
+    let new_button = Button::new();
+    new_button.set_child(Some(&Image::from_icon_name("document-new-symbolic")));
+    new_button.set_size_request(40, 40);
+    button_box.append(&home_button);
+    button_box.append(&new_button);
+    container.add_overlay(&button_box);
 
     let home_state = state.clone();
     let home_area = area.clone();
@@ -129,34 +167,33 @@ fn open_graph_tab(
 
     let new_state = state.clone();
     let new_area = area.clone();
-    let window_clone = window.clone();
-    new_button.connect_clicked(move |_| {
-        let dialog = Dialog::with_buttons(
-            Some("New Note"),
-            Some(&window_clone),
-            DialogFlags::MODAL,
-            &[
-                ("Create", gtk4::ResponseType::Ok),
-                ("Cancel", gtk4::ResponseType::Cancel),
-            ],
-        );
+    new_button.connect_clicked(move |btn| {
+        let pop = Popover::new();
+        pop.set_has_arrow(true);
+        pop.set_position(PositionType::Top);
+        pop.set_autohide(true);
         let entry = Entry::new();
-        dialog.content_area().append(&entry);
-        dialog.show();
+        let create_btn = Button::with_label("Create");
+        let v = Box::new(Orientation::Vertical, 5);
+        v.append(&entry);
+        v.append(&create_btn);
+        pop.set_child(Some(&v));
+        pop.set_parent(btn);
+        pop.popup();
+
         let st_rc = new_state.clone();
         let area_clone = new_area.clone();
-        dialog.connect_response(move |d, resp| {
-            if resp == gtk4::ResponseType::Ok {
-                let title = entry.text().to_string();
-                if !title.is_empty() {
-                    let note = crate::note::Note::new(title, String::new(), None);
-                    let _ = note.save();
-                    let mut st = st_rc.borrow_mut();
-                    reset_state(&mut st);
-                    area_clone.queue_draw();
-                }
+        let pop_clone = pop.clone();
+        create_btn.connect_clicked(move |_| {
+            let title = entry.text().to_string();
+            if !title.is_empty() {
+                let note = crate::note::Note::new(title.clone(), String::new(), None);
+                let _ = note.save();
+                let mut st = st_rc.borrow_mut();
+                add_node_to_state(&mut st, &title);
+                area_clone.queue_draw();
             }
-            d.close();
+            pop_clone.popdown();
         });
     });
 
@@ -168,6 +205,7 @@ fn open_graph_tab(
 
         ctx.set_source_rgb(1.0, 1.0, 1.0);
         ctx.paint().unwrap();
+        ctx.set_font_size(13.0);
 
         if graph.nodes.is_empty() {
             return;
@@ -191,7 +229,8 @@ fn open_graph_tab(
             let _ = ctx.stroke();
         }
 
-        let show_names = scale > 0.5 && graph.nodes.len() < 50;
+        let text_alpha = ((scale - 0.4) * 5.0).clamp(0.0, 1.0);
+        let show_names = text_alpha > 0.0 && graph.nodes.len() < 50;
 
         for (i, node) in graph.nodes.iter().enumerate() {
             let (x, y) = positions[i];
@@ -199,13 +238,21 @@ fn open_graph_tab(
             let sy = y * scale + pan_y;
             let radius = 8.0 + (node.links as f64).sqrt() * 2.0;
             ctx.arc(sx, sy, radius * scale.max(0.2), 0.0, 2.0 * PI);
-            ctx.set_source_rgb(0.2, 0.6, 0.86);
+            if st.hover == Some(i) {
+                ctx.set_source_rgb(0.3, 0.7, 1.0);
+            } else {
+                ctx.set_source_rgb(0.2, 0.6, 0.86);
+            }
             let _ = ctx.fill_preserve();
             ctx.set_source_rgb(0.0, 0.0, 0.0);
             let _ = ctx.stroke();
 
-            if show_names {
-                ctx.move_to(sx + 12.0 * scale, sy + 4.0 * scale);
+            let label_alpha = if st.hover == Some(i) { 1.0 } else { text_alpha };
+            if st.hover == Some(i) || show_names {
+                let offset_x = radius * scale + 8.0;
+                let offset_y = 4.0 * scale;
+                ctx.move_to(sx + offset_x, sy + offset_y);
+                ctx.set_source_rgba(0.0, 0.0, 0.0, label_alpha);
                 let _ = ctx.show_text(&node.name);
             }
             ctx.new_path();
@@ -247,6 +294,35 @@ fn open_graph_tab(
     });
     area.add_controller(scroll);
 
+    // Hover highlight
+    let hover_state = state.clone();
+    let hover_area = area.clone();
+    let motion = gtk4::EventControllerMotion::new();
+    motion.connect_motion(move |_, x, y| {
+        let mut st = hover_state.borrow_mut();
+        let pan_x = st.pan_x + hover_area.width() as f64 / 2.0;
+        let pan_y = st.pan_y + hover_area.height() as f64 / 2.0;
+        let gx = (x as f64 - pan_x) / st.scale;
+        let gy = (y as f64 - pan_y) / st.scale;
+        st.hover = None;
+        for (i, node) in st.data.graph.nodes.iter().enumerate() {
+            let (nx, ny) = st.positions[i];
+            let radius = 8.0 + (node.links as f64).sqrt() * 2.0;
+            if (gx - nx).powi(2) + (gy - ny).powi(2) <= radius.powi(2) {
+                st.hover = Some(i);
+                break;
+            }
+        }
+        hover_area.queue_draw();
+    });
+    let leave_state = state.clone();
+    let leave_area = area.clone();
+    motion.connect_leave(move |_| {
+        leave_state.borrow_mut().hover = None;
+        leave_area.queue_draw();
+    });
+    area.add_controller(motion);
+
     // Open note on click
     let click_state = state.clone();
     let click_area = area.clone();
@@ -254,49 +330,76 @@ fn open_graph_tab(
     let tabs_clone = open_tabs.clone();
     let click = gtk4::GestureClick::new();
     click.connect_released(move |_, _n, x, y| {
-        let st = click_state.borrow();
-        let pan_x = st.pan_x + click_area.width() as f64 / 2.0;
-        let pan_y = st.pan_y + click_area.height() as f64 / 2.0;
-        let gx = (x as f64 - pan_x) / st.scale;
-        let gy = (y as f64 - pan_y) / st.scale;
+        let note_name_opt = {
+            let st = click_state.borrow();
+            let pan_x = st.pan_x + click_area.width() as f64 / 2.0;
+            let pan_y = st.pan_y + click_area.height() as f64 / 2.0;
+            let gx = (x as f64 - pan_x) / st.scale;
+            let gy = (y as f64 - pan_y) / st.scale;
+            let mut res = None;
+            for (i, node) in st.data.graph.nodes.iter().enumerate() {
+                let (nx, ny) = st.positions[i];
+                let radius = 8.0 + (node.links as f64).sqrt() * 2.0;
+                let dist2 = (gx - nx).powi(2) + (gy - ny).powi(2);
+                if dist2 <= radius.powi(2) {
+                    res = Some(node.name.clone());
+                    break;
+                }
+            }
+            res
+        };
 
-        for (i, node) in st.data.graph.nodes.iter().enumerate() {
-            let (nx, ny) = st.positions[i];
-            let radius = 8.0 + (node.links as f64).sqrt() * 2.0;
-            let dist2 = (gx - nx).powi(2) + (gy - ny).powi(2);
-            if dist2 <= radius.powi(2) {
-                // open note
-                let note_name = node.name.clone();
-                if let Some(term) = tabs_clone.borrow().get(&note_name).cloned() {
-                    if let Some(page) = notebook_clone.page_num(&term) {
-                        notebook_clone.set_current_page(Some(page));
-                        return;
-                    }
-                }
-                let path = format!("{}/{}", NOTES_DIR, note_name);
-                let term = Terminal::new();
-                term.set_hexpand(true);
-                term.set_vexpand(true);
-                term.spawn_async(
-                    PtyFlags::DEFAULT,
-                    None::<&str>,
-                    &["nvim", &path],
-                    &[],
-                    glib::SpawnFlags::SEARCH_PATH,
-                    || {},
-                    -1,
-                    None::<&gio::Cancellable>,
-                    |_| {},
-                );
-                let label_widget = Label::new(Some(&note_name));
-                notebook_clone.append_page(&term, Some(&label_widget));
-                if let Some(page) = notebook_clone.page_num(&term) {
-                    notebook_clone.set_current_page(Some(page));
-                }
-                tabs_clone.borrow_mut().insert(note_name, term);
+        let Some(note_name) = note_name_opt else {
+            return;
+        };
+        let path = format!("{}/{}", NOTES_DIR, note_name);
+
+        if let Some(term) = tabs_clone.borrow().get(&note_name).cloned() {
+            if let Some(page) = notebook_clone.page_num(&term) {
+                notebook_clone.set_current_page(Some(page));
                 return;
             }
         }
+
+        let term = Terminal::new();
+        term.set_hexpand(true);
+        term.set_vexpand(true);
+        term.spawn_async(
+            PtyFlags::DEFAULT,
+            None::<&str>,
+            &["nvim", &path],
+            &[],
+            glib::SpawnFlags::SEARCH_PATH,
+            || {},
+            -1,
+            None::<&gio::Cancellable>,
+            |_| {},
+        );
+
+        let label = Label::new(Some(&note_name));
+        let close_btn = Button::new();
+        close_btn.set_child(Some(&Image::from_icon_name("window-close-symbolic")));
+        close_btn.set_size_request(16, 16);
+        let tab_box = Box::new(Orientation::Horizontal, 4);
+        tab_box.append(&label);
+        tab_box.append(&close_btn);
+        notebook_clone.append_page(&term, Some(&tab_box));
+        notebook_clone.set_tab_reorderable(&term, true);
+        if let Some(page) = notebook_clone.page_num(&term) {
+            notebook_clone.set_current_page(Some(page));
+        }
+
+        let note_key = note_name.clone();
+        let nb_clone = notebook_clone.clone();
+        let tabs_rc = tabs_clone.clone();
+        let term_for_close = term.clone();
+        close_btn.connect_clicked(move |_| {
+            if let Some(idx) = nb_clone.page_num(&term_for_close) {
+                nb_clone.remove_page(Some(idx));
+            }
+            tabs_rc.borrow_mut().remove(&note_key);
+        });
+        tabs_clone.borrow_mut().insert(note_name, term);
     });
     area.add_controller(click);
 
@@ -338,6 +441,12 @@ fn open_graph_tab(
             for i in 0..n {
                 st.velocities[i].0 = (st.velocities[i].0 + forces[i].0) * 0.85;
                 st.velocities[i].1 = (st.velocities[i].1 + forces[i].1) * 0.85;
+                if st.velocities[i].0.abs() < 0.001 && forces[i].0.abs() < 0.001 {
+                    st.velocities[i].0 *= 0.5;
+                }
+                if st.velocities[i].1.abs() < 0.001 && forces[i].1.abs() < 0.001 {
+                    st.velocities[i].1 *= 0.5;
+                }
                 st.positions[i].0 += st.velocities[i].0 * 0.1;
                 st.positions[i].1 += st.velocities[i].1 * 0.1;
             }
@@ -361,8 +470,9 @@ fn open_graph_tab(
         }
     });
 
-    let label_widget = Label::new(Some("Graph"));
-    notebook.append_page(&container, Some(&label_widget));
+    let graph_icon = Image::from_icon_name("media-playlist-consecutive-symbolic");
+    notebook.append_page(&container, Some(&graph_icon));
+    notebook.set_tab_reorderable(&container, false);
     if let Some(page) = notebook.page_num(&container) {
         notebook.set_current_page(Some(page));
     }
