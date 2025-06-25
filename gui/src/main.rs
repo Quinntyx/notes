@@ -1,3 +1,5 @@
+use cairo;
+use directories::ProjectDirs;
 use gtk4::gdk;
 use gtk4::prelude::*;
 use gtk4::{
@@ -5,6 +7,7 @@ use gtk4::{
     Orientation, Overlay, Popover, PositionType, gio, glib,
 };
 use open;
+use reqwest::blocking as reqwest;
 use vte4::{PtyFlags, Terminal, TerminalExtManual};
 
 use notes_core::note::{set_vault_dir, vault_dir};
@@ -64,10 +67,41 @@ fn node_color(node: &notes_core::graph::Node) -> (f64, f64, f64) {
     }
 }
 
+fn ensure_rubik_font() {
+    const RUBIK_URL: &str =
+        "https://fonts.gstatic.com/s/rubik/v30/iJWZBXyIfDnIV5PNhY1KTN7Z-Yh-B4i1UA.ttf";
+    if let Some(proj) = ProjectDirs::from("com", "example", "notes") {
+        let font_dir = proj.data_dir().join("fonts");
+        let _ = std::fs::create_dir_all(&font_dir);
+        let font_path = font_dir.join("Rubik-Regular.ttf");
+        if !font_path.exists() {
+            if let Ok(bytes) = reqwest::get(RUBIK_URL).and_then(|r| r.bytes()) {
+                let _ = std::fs::write(&font_path, bytes);
+                let _ = std::process::Command::new("fc-cache")
+                    .arg("-f")
+                    .arg(&font_dir)
+                    .status();
+            }
+        }
+    }
+}
+
 pub fn run_gui() {
+    ensure_rubik_font();
     let app = Application::builder()
         .application_id("com.example.notes")
         .build();
+
+    if let Some(display) = gdk::Display::default() {
+        let provider = gtk4::CssProvider::new();
+        let css = "* { font-family: 'Rubik'; }\nwindow { background: #FAFAFA; }\nbutton { border-radius: 4px; padding: 6px 12px; }\n";
+        provider.load_from_data(css);
+        gtk4::style_context_add_provider_for_display(
+            &display,
+            &provider,
+            gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
+        );
+    }
 
     app.connect_activate(|app| {
         show_dashboard(app);
@@ -464,6 +498,7 @@ fn open_graph_tab(
 
         ctx.set_source_rgb(1.0, 1.0, 1.0);
         ctx.paint().unwrap();
+        ctx.select_font_face("Rubik", cairo::FontSlant::Normal, cairo::FontWeight::Normal);
         ctx.set_font_size(13.0);
 
         if graph.nodes.is_empty() {

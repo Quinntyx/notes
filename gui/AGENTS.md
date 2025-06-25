@@ -15,3 +15,5 @@ Only put UI and event-handling logic here. Core algorithms should remain in the 
 - Prefer popovers for modal interactions to keep the interface lightweight.
 - Keep node label text size constant as you zoom; offset labels outward relative to zoom so they don't overlap the nodes.
 - Node format indicators are rendered in ALL CAPS across the interface.
+- All UI fonts use the Google Rubik family. Do **not** commit font binaries; the application downloads the files at runtime if missing.
+- Follow Google Material Design colors and spacing. Use soft corner radius on buttons and default window background `#FAFAFA`.
