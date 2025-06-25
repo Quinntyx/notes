@@ -1,3 +1,4 @@
+use gtk4::gdk;
 use gtk4::prelude::*;
 use gtk4::{
     Application, ApplicationWindow, Box, Button, DrawingArea, Entry, Image, Label, Notebook,
@@ -25,15 +26,73 @@ pub fn run_gui() {
             Rc::new(RefCell::new(HashMap::new()));
         let graph_tab: Rc<RefCell<Option<Overlay>>> = Rc::new(RefCell::new(None));
 
+        let menu = gio::Menu::new();
+        let file_menu = gio::Menu::new();
+        file_menu.append(Some("New Note"), Some("app.new_note"));
+        file_menu.append(Some("Close Tab"), Some("app.close_tab"));
+        file_menu.append(Some("Quit"), Some("app.quit"));
+        menu.append_submenu(Some("File"), &file_menu);
+        let menu_bar = gtk4::PopoverMenuBar::from_model(Some(&menu));
+
+        let vbox = Box::new(Orientation::Vertical, 0);
+        vbox.append(&menu_bar);
+        vbox.append(&notebook);
+
         let window = ApplicationWindow::builder()
             .application(app)
             .title("Notes GUI")
             .default_width(800)
             .default_height(600)
-            .child(&notebook)
+            .child(&vbox)
             .build();
 
-        open_graph_tab(&notebook, &open_tabs, &graph_tab, &window);
+        let app_clone = app.clone();
+        app.add_action_entries(vec![
+            gio::ActionEntry::builder("new_note")
+                .activate(glib::clone!(@weak window => move |_,_,_| {
+                    show_new_note_popover(&window);
+                }))
+                .build(),
+            gio::ActionEntry::builder("close_tab")
+                .activate(glib::clone!(@weak notebook, @weak open_tabs, @weak graph_tab => move |_,_,_| {
+                    close_current_tab(&notebook, &open_tabs, &graph_tab);
+                }))
+                .build(),
+            gio::ActionEntry::builder("quit")
+                .activate(move |app: &Application, _, _| {
+                    app.quit();
+                })
+                .build(),
+        ]);
+
+        app.set_accels_for_action("app.new_note", &["<Primary>n"]);
+        app.set_accels_for_action("app.close_tab", &["<Primary>w"]);
+        if cfg!(target_os = "macos") {
+            app.set_accels_for_action("app.quit", &["<Primary>q"]);
+        }
+
+        let key_controller = gtk4::EventControllerKey::builder()
+            .propagation_phase(gtk4::PropagationPhase::Capture)
+            .build();
+        key_controller.connect_key_pressed(glib::clone!(@weak app_clone => @default-return glib::Propagation::Proceed, move |_, key, _code, state| {
+            let modifier = if cfg!(target_os = "macos") { gdk::ModifierType::META_MASK } else { gdk::ModifierType::CONTROL_MASK };
+            if state.contains(modifier) {
+                if key == gdk::Key::n {
+                    app_clone.activate_action("new_note", None);
+                    return glib::Propagation::Stop;
+                } else if key == gdk::Key::w {
+                    app_clone.activate_action("close_tab", None);
+                    return glib::Propagation::Stop;
+                } else if cfg!(target_os = "macos") && key == gdk::Key::q {
+                    app_clone.activate_action("quit", None);
+                    return glib::Propagation::Stop;
+                }
+            }
+            glib::Propagation::Proceed
+        }));
+        window.add_controller(key_controller);
+
+        open_graph_tab(&notebook, &open_tabs, &graph_tab);
 
         window.show();
     });
@@ -53,7 +112,6 @@ fn open_graph_tab(
     notebook: &Notebook,
     open_tabs: &Rc<RefCell<HashMap<String, Terminal>>>,
     graph_tab: &Rc<RefCell<Option<Overlay>>>,
-    window: &ApplicationWindow,
 ) {
     use crate::graph::{load_graph_data, update_open_notes};
     use std::f64::consts::PI;
@@ -184,8 +242,9 @@ fn open_graph_tab(
         let st_rc = new_state.clone();
         let area_clone = new_area.clone();
         let pop_clone = pop.clone();
-        create_btn.connect_clicked(move |_| {
-            let title = entry.text().to_string();
+        let entry_clone = entry.clone();
+        let do_create = Rc::new(move || {
+            let title = entry_clone.text().to_string();
             if !title.is_empty() {
                 let note = crate::note::Note::new(title.clone(), String::new(), None);
                 let _ = note.save();
@@ -194,6 +253,13 @@ fn open_graph_tab(
                 area_clone.queue_draw();
             }
             pop_clone.popdown();
+        });
+        let cb = do_create.clone();
+        create_btn.connect_clicked(move |_| {
+            cb();
+        });
+        entry.connect_activate(move |_| {
+            do_create();
         });
     });
 
@@ -477,4 +543,72 @@ fn open_graph_tab(
         notebook.set_current_page(Some(page));
     }
     *graph_tab.borrow_mut() = Some(container);
+}
+
+fn show_new_note_popover(window: &ApplicationWindow) {
+    let pop = Popover::new();
+    pop.set_has_arrow(false);
+    pop.set_autohide(true);
+    let entry = Entry::new();
+    let create_btn = Button::with_label("Create");
+    let v = Box::new(Orientation::Vertical, 5);
+    v.append(&entry);
+    v.append(&create_btn);
+    pop.set_child(Some(&v));
+    pop.set_parent(window);
+    let rect = gdk::Rectangle::new(
+        window.allocated_width() / 2,
+        window.allocated_height() / 2,
+        1,
+        1,
+    );
+    pop.set_pointing_to(Some(&rect));
+    pop.popup();
+
+    let pop_clone = pop.clone();
+    let entry_clone = entry.clone();
+    let do_create = Rc::new(move || {
+        let title = entry_clone.text().to_string();
+        if !title.is_empty() {
+            let note = crate::note::Note::new(title.clone(), String::new(), None);
+            let _ = note.save();
+        }
+        pop_clone.popdown();
+    });
+    let cb = do_create.clone();
+    create_btn.connect_clicked(move |_| {
+        cb();
+    });
+    entry.connect_activate(move |_| {
+        do_create();
+    });
+}
+
+fn close_current_tab(
+    notebook: &Notebook,
+    open_tabs: &Rc<RefCell<HashMap<String, Terminal>>>,
+    graph_tab: &Rc<RefCell<Option<Overlay>>>,
+) {
+    if let Some(current) = notebook.current_page() {
+        if let Some(ref graph_widget) = *graph_tab.borrow() {
+            if notebook.page_num(graph_widget) == Some(current) {
+                return;
+            }
+        }
+        if let Some(widget) = notebook.nth_page(Some(current)) {
+            if let Ok(term) = widget.clone().downcast::<Terminal>() {
+                let mut remove_key = None;
+                for (k, v) in open_tabs.borrow().iter() {
+                    if v == &term {
+                        remove_key = Some(k.clone());
+                        break;
+                    }
+                }
+                if let Some(k) = remove_key {
+                    open_tabs.borrow_mut().remove(&k);
+                }
+            }
+        }
+        notebook.remove_page(Some(current));
+    }
 }
