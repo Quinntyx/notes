@@ -9,7 +9,24 @@ use vte4::{PtyFlags, Terminal, TerminalExtManual};
 use notes_core::note::{set_vault_dir, vault_dir};
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::rc::Rc;
+
+fn expand_tilde(path: &str) -> PathBuf {
+    #[cfg(unix)]
+    {
+        if path == "~" {
+            if let Some(home) = std::env::var_os("HOME") {
+                return PathBuf::from(home);
+            }
+        } else if let Some(rest) = path.strip_prefix("~/") {
+            if let Some(home) = std::env::var_os("HOME") {
+                return PathBuf::from(home).join(rest);
+            }
+        }
+    }
+    PathBuf::from(path)
+}
 
 pub fn run_gui() {
     let app = Application::builder()
@@ -50,9 +67,10 @@ fn show_dashboard(app: &Application) {
 
     button.connect_clicked(
         glib::clone!(@weak window, @weak app, @weak entry => move |_| {
-            let path = entry.text();
-            if !path.is_empty() {
-                set_vault_dir(path.as_str());
+            let path_str = entry.text();
+            if !path_str.is_empty() {
+                let dir = expand_tilde(path_str.as_str());
+                set_vault_dir(dir);
                 window.close();
                 open_main_window(&app);
             }
