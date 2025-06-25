@@ -7,7 +7,6 @@ use crate::note::{NOTES_DIR};
 pub fn run_gui() {
     let app = Application::builder()
         .application_id("com.example.notes")
-        .flags(gio::ApplicationFlags::HANDLES_OPEN)
         .build();
 
     app.connect_activate(|app| {
@@ -73,5 +72,9 @@ pub fn run_gui() {
         window.show();
     });
 
-    app.run();
+    // Pass an empty argument list to avoid `g_application_open` from
+    // interpreting leftover command line arguments as files to open.
+    // This prevents warnings about missing file handlers when running
+    // `cargo run gui` from the CLI.
+    app.run_with_args::<&str>(&[]);
 }
