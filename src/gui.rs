@@ -55,7 +55,7 @@ fn open_graph_tab(
     graph_tab: &Rc<RefCell<Option<Box>>>,
     window: &ApplicationWindow,
 ) {
-    use crate::graph::build_graph;
+    use crate::graph::{load_graph_data, update_open_notes};
     use std::f64::consts::PI;
 
     if let Some(ref existing) = *graph_tab.borrow() {
@@ -66,7 +66,7 @@ fn open_graph_tab(
     }
 
     struct GraphState {
-        graph: crate::graph::Graph,
+        data: crate::graph::GraphData,
         positions: Vec<(f64, f64)>,
         velocities: Vec<(f64, f64)>,
         pan_x: f64,
@@ -75,8 +75,8 @@ fn open_graph_tab(
     }
 
     fn reset_state(state: &mut GraphState) {
-        state.graph = build_graph();
-        let n = state.graph.nodes.len();
+        state.data = load_graph_data();
+        let n = state.data.graph.nodes.len();
         state.positions.clear();
         for i in 0..n {
             let angle = i as f64 / n.max(1) as f64 * 2.0 * PI;
@@ -90,14 +90,20 @@ fn open_graph_tab(
     }
 
     let mut init = GraphState {
-        graph: build_graph(),
+        data: load_graph_data(),
         positions: Vec::new(),
         velocities: Vec::new(),
         pan_x: 0.0,
         pan_y: 0.0,
         scale: 1.0,
     };
-    reset_state(&mut init);
+    let n = init.data.graph.nodes.len();
+    for i in 0..n {
+        let angle = i as f64 / n.max(1) as f64 * 2.0 * PI;
+        let r = 100.0;
+        init.positions.push((r * angle.cos(), r * angle.sin()));
+    }
+    init.velocities = vec![(0.0, 0.0); n];
     let state = Rc::new(RefCell::new(init));
 
     let area = DrawingArea::new();
@@ -157,7 +163,7 @@ fn open_graph_tab(
     let draw_state = state.clone();
     area.set_draw_func(move |_, ctx, width, height| {
         let st = draw_state.borrow();
-        let graph = &st.graph;
+        let graph = &st.data.graph;
         let positions = &st.positions;
 
         ctx.set_source_rgb(1.0, 1.0, 1.0);
@@ -254,7 +260,7 @@ fn open_graph_tab(
         let gx = (x as f64 - pan_x) / st.scale;
         let gy = (y as f64 - pan_y) / st.scale;
 
-        for (i, node) in st.graph.nodes.iter().enumerate() {
+        for (i, node) in st.data.graph.nodes.iter().enumerate() {
             let (nx, ny) = st.positions[i];
             let radius = 8.0 + (node.links as f64).sqrt() * 2.0;
             let dist2 = (gx - nx).powi(2) + (gy - ny).powi(2);
@@ -300,7 +306,7 @@ fn open_graph_tab(
     glib::timeout_add_local(std::time::Duration::from_millis(16), move || {
         {
             let mut st = sim_state.borrow_mut();
-            let n = st.graph.nodes.len();
+            let n = st.data.graph.nodes.len();
             let mut forces = vec![(0.0, 0.0); n];
             for i in 0..n {
                 for j in (i + 1)..n {
@@ -317,7 +323,7 @@ fn open_graph_tab(
                     forces[j].1 -= fy;
                 }
             }
-            for &(a, b) in &st.graph.edges {
+            for &(a, b) in &st.data.graph.edges {
                 let dx = st.positions[a].0 - st.positions[b].0;
                 let dy = st.positions[a].1 - st.positions[b].1;
                 let dist = (dx * dx + dy * dy).sqrt();
@@ -338,6 +344,21 @@ fn open_graph_tab(
         }
         sim_area.queue_draw();
         glib::ControlFlow::Continue
+    });
+
+    let switch_state = state.clone();
+    let switch_tabs = open_tabs.clone();
+    let switch_area = area.clone();
+    let switch_container = container.clone();
+    notebook.connect_switch_page(move |nb, _page, idx| {
+        if let Some(page_num) = nb.page_num(&switch_container) {
+            if page_num == idx {
+                let titles: Vec<String> = switch_tabs.borrow().keys().cloned().collect();
+                let mut st = switch_state.borrow_mut();
+                update_open_notes(&mut st.data, &titles);
+                switch_area.queue_draw();
+            }
+        }
     });
 
     let label_widget = Label::new(Some("Graph"));
