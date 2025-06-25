@@ -48,41 +48,49 @@ fn is_end_boundary(text: &str, idx: usize) -> bool {
     idx == text.len() || text.as_bytes()[idx].is_ascii_whitespace()
 }
 
-fn find_unique_links(text: &str, canon: &[String], names: &[String]) -> Vec<usize> {
-    let mut result = Vec::new();
-    for (i, name_i) in names.iter().enumerate() {
+struct Match {
+    start: usize,
+    end: usize,
+    idx: usize,
+}
+
+fn find_unique_links(text: &str, _canon: &[String], names: &[String]) -> Vec<usize> {
+    let mut matches = Vec::new();
+    for (i, name) in names.iter().enumerate() {
         let mut search_start = 0;
-        let mut found = false;
-        while let Some(pos) = text[search_start..].find(name_i) {
-            let idx = search_start + pos;
-            let end = idx + name_i.len();
-            if !is_boundary(text, idx) || !is_end_boundary(text, end) {
-                search_start = idx + 1;
-                continue;
+        while let Some(pos) = text[search_start..].find(name) {
+            let start = search_start + pos;
+            let end = start + name.len();
+            if is_boundary(text, start) && is_end_boundary(text, end) {
+                matches.push(Match { start, end, idx: i });
             }
-            let mut overshadowed = false;
-            for (j, name_j) in names.iter().enumerate() {
-                if i == j {
-                    continue;
-                }
-                if canon[j].starts_with(&canon[i])
-                    && text[idx..].starts_with(name_j)
-                    && is_end_boundary(text, idx + name_j.len())
-                {
-                    overshadowed = true;
-                    break;
-                }
-            }
-            if !overshadowed {
-                found = true;
-                break;
-            }
-            search_start = idx + 1;
-        }
-        if found {
-            result.push(i);
+            search_start = start + 1;
         }
     }
+
+    let mut keep = vec![true; matches.len()];
+    for i in 0..matches.len() {
+        for j in 0..matches.len() {
+            if i == j {
+                continue;
+            }
+            let a = &matches[i];
+            let b = &matches[j];
+            if b.start <= a.start && b.end >= a.end && (b.end - b.start) > (a.end - a.start) {
+                keep[i] = false;
+                break;
+            }
+        }
+    }
+
+    let mut result = Vec::new();
+    for (m, &k) in matches.iter().zip(&keep) {
+        if k {
+            result.push(m.idx);
+        }
+    }
+    result.sort_unstable();
+    result.dedup();
     result
 }
 
@@ -244,4 +252,47 @@ pub fn update_open_notes(data: &mut GraphData, open_notes: &[String]) {
         }
     }
     recompute_edges(data);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{canonicalize, find_unique_links, normalize};
+
+    #[test]
+    fn longest_match() {
+        let names = vec![
+            "nuclear power".to_string(),
+            "nuclear power in iran".to_string(),
+        ];
+        let canonical: Vec<String> = names.iter().map(|s| canonicalize(s)).collect();
+        let normalized: Vec<String> = names.iter().map(|s| normalize(s)).collect();
+        let text = normalize("nuclear power in Iran");
+        let links = find_unique_links(&text, &canonical, &normalized);
+        assert_eq!(links, vec![1]);
+    }
+
+    #[test]
+    fn partial_overlap() {
+        let names = vec![
+            "Power Generation Techniques".to_string(),
+            "Nuclear Power Generation".to_string(),
+        ];
+        let canonical: Vec<String> = names.iter().map(|s| canonicalize(s)).collect();
+        let normalized: Vec<String> = names.iter().map(|s| normalize(s)).collect();
+        let text = normalize("nuclear power generation techniques");
+        let mut links = find_unique_links(&text, &canonical, &normalized);
+        links.sort();
+        assert_eq!(links, vec![0, 1]);
+    }
+
+    #[test]
+    fn no_substring_match() {
+        let names = vec!["note".to_string(), "another note".to_string()];
+        let canonical: Vec<String> = names.iter().map(|s| canonicalize(s)).collect();
+        let normalized: Vec<String> = names.iter().map(|s| normalize(s)).collect();
+        let text = normalize("newnote another note with spaces");
+        let mut links = find_unique_links(&text, &canonical, &normalized);
+        links.sort();
+        assert_eq!(links, vec![1]);
+    }
 }
