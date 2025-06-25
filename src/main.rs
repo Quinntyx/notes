@@ -4,6 +4,7 @@ use std::process;
 // Declare note as a module
 mod note;
 mod gui;
+mod graph;
 use note::Note;
 
 fn main() {

@@ -1,7 +1,7 @@
 use gtk4::prelude::*;
 use gtk4::{
-    Application, ApplicationWindow, Box, Label, ListBox, ListBoxRow, Notebook, Orientation,
-    ScrolledWindow, gio, glib,
+    Application, ApplicationWindow, Box, Button, DrawingArea, Label, ListBox, ListBoxRow,
+    Notebook, Orientation, ScrolledWindow, gio, glib,
 };
 use vte4::{PtyFlags, Terminal, TerminalExtManual};
 
@@ -15,6 +15,9 @@ pub fn run_gui() {
     app.connect_activate(|app| {
         // main container
         let main_box = Box::new(Orientation::Horizontal, 0);
+
+        // container for list and controls
+        let side_box = Box::new(Orientation::Vertical, 5);
 
         // notes list
         let list = ListBox::new();
@@ -36,7 +39,17 @@ pub fn run_gui() {
             .vexpand(true)
             .min_content_width(200)
             .build();
-        main_box.append(&scroll);
+        side_box.append(&scroll);
+
+        // button to open graph view
+        let graph_button = Button::with_label("Graph");
+        let app_clone = app.clone();
+        graph_button.connect_clicked(move |_| {
+            open_graph_window(&app_clone);
+        });
+        side_box.append(&graph_button);
+
+        main_box.append(&side_box);
 
         // notebook to hold multiple editor tabs
         let notebook = Notebook::new();
@@ -106,4 +119,62 @@ pub fn run_gui() {
     // This prevents warnings about missing file handlers when running
     // `cargo run gui` from the CLI.
     app.run_with_args::<&str>(&[]);
+}
+
+fn open_graph_window(app: &Application) {
+    use crate::graph::build_graph;
+    use std::f64::consts::PI;
+
+    let graph = build_graph();
+
+    let window = ApplicationWindow::builder()
+        .application(app)
+        .title("Notes Graph")
+        .default_width(800)
+        .default_height(600)
+        .build();
+
+    let area = DrawingArea::new();
+    area.set_draw_func(move |_, ctx, width, height| {
+        let n = graph.nodes.len();
+        if n == 0 {
+            return;
+        }
+
+        let center_x = width as f64 / 2.0;
+        let center_y = height as f64 / 2.0;
+        let radius = (width.min(height) as f64) * 0.4;
+        let mut positions = Vec::new();
+
+        for i in 0..n {
+            let angle = i as f64 / n as f64 * 2.0 * PI;
+            let x = center_x + radius * angle.cos();
+            let y = center_y + radius * angle.sin();
+            positions.push((x, y));
+        }
+
+        ctx.set_source_rgb(0.6, 0.6, 0.6);
+        for &(a, b) in &graph.edges {
+            let (sx, sy) = positions[a];
+            let (tx, ty) = positions[b];
+            ctx.move_to(sx, sy);
+            ctx.line_to(tx, ty);
+            let _ = ctx.stroke();
+        }
+
+        for (i, node) in graph.nodes.iter().enumerate() {
+            let (x, y) = positions[i];
+            ctx.arc(x, y, 10.0, 0.0, 2.0 * PI);
+            ctx.set_source_rgb(0.2, 0.6, 0.86);
+            let _ = ctx.fill_preserve();
+            ctx.set_source_rgb(0.0, 0.0, 0.0);
+            let _ = ctx.stroke();
+
+            ctx.move_to(x + 12.0, y + 4.0);
+            let _ = ctx.show_text(&node.name);
+        }
+    });
+
+    window.set_child(Some(&area));
+    window.show();
 }

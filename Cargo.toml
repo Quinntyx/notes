@@ -6,3 +6,4 @@ edition = "2024"
 [dependencies]
 gtk4 = "0.9"
 vte4 = "0.8"
+cairo-rs = "0.20"
