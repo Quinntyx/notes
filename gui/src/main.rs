@@ -4,13 +4,16 @@ use gtk4::{
     Application, ApplicationWindow, Box, Button, DrawingArea, Entry, Image, Label, Notebook,
     Orientation, Overlay, Popover, PositionType, gio, glib,
 };
+use open;
 use vte4::{PtyFlags, Terminal, TerminalExtManual};
 
 use notes_core::note::{set_vault_dir, vault_dir};
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::hash::Hasher;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use twox_hash::XxHash64;
 
 fn expand_tilde(path: &str) -> PathBuf {
     #[cfg(unix)]
@@ -26,6 +29,39 @@ fn expand_tilde(path: &str) -> PathBuf {
         }
     }
     PathBuf::from(path)
+}
+
+fn is_text_file(path: &Path) -> bool {
+    std::fs::read_to_string(path).is_ok()
+}
+
+fn hash_color(ext: &str) -> (f64, f64, f64) {
+    let mut hasher = XxHash64::with_seed(0);
+    hasher.write(ext.as_bytes());
+    let hash = hasher.finish();
+    let r = ((hash >> 0) & 0xFF) as f64 / 255.0;
+    let g = ((hash >> 8) & 0xFF) as f64 / 255.0;
+    let b = ((hash >> 16) & 0xFF) as f64 / 255.0;
+    (r, g, b)
+}
+
+fn lighten_color(r: f64, g: f64, b: f64) -> (f64, f64, f64) {
+    let factor = 0.3;
+    (
+        r + (1.0 - r) * factor,
+        g + (1.0 - g) * factor,
+        b + (1.0 - b) * factor,
+    )
+}
+
+fn node_color(node: &notes_core::graph::Node) -> (f64, f64, f64) {
+    if node.is_directory() {
+        (1.0, 1.0, 1.0)
+    } else if let Some(ext) = node.primary_file_format() {
+        hash_color(&ext)
+    } else {
+        hash_color("md")
+    }
 }
 
 pub fn run_gui() {
@@ -164,6 +200,93 @@ fn open_main_window(app: &Application) {
     window.show();
 }
 
+fn open_any_path(
+    notebook: &Notebook,
+    open_tabs: &Rc<RefCell<HashMap<String, Terminal>>>,
+    node: &notes_core::graph::Node,
+    path: &Path,
+) {
+    let key = path.to_string_lossy().to_string();
+    if is_text_file(path) {
+        if let Some(term) = open_tabs.borrow().get(&key).cloned() {
+            if let Some(page) = notebook.page_num(&term) {
+                notebook.set_current_page(Some(page));
+                return;
+            }
+        }
+
+        let term = Terminal::new();
+        term.set_hexpand(true);
+        term.set_vexpand(true);
+        term.spawn_async(
+            PtyFlags::DEFAULT,
+            None::<&str>,
+            &["nvim", &key],
+            &[],
+            glib::SpawnFlags::SEARCH_PATH,
+            || {},
+            -1,
+            None::<&gio::Cancellable>,
+            |_| {},
+        );
+
+        let label = Label::new(path.file_name().and_then(|s| s.to_str()));
+        let close_btn = Button::new();
+        close_btn.set_child(Some(&Image::from_icon_name("window-close-symbolic")));
+        close_btn.set_size_request(16, 16);
+        let tab_box = Box::new(Orientation::Horizontal, 4);
+        tab_box.append(&label);
+        tab_box.append(&close_btn);
+
+        let format_bar = Box::new(Orientation::Horizontal, 4);
+        let mut exts: Vec<(String, PathBuf)> = node
+            .paths
+            .iter()
+            .filter_map(|p| {
+                p.extension()
+                    .and_then(|s| s.to_str())
+                    .map(|e| (e.to_ascii_uppercase(), p.clone()))
+            })
+            .collect();
+        exts.sort_by(|a, b| a.0.cmp(&b.0));
+        exts.dedup_by(|a, b| a.0 == b.0);
+        for (ext_u, path_u) in exts {
+            let btn = Button::with_label(&ext_u);
+            let nb_clone = notebook.clone();
+            let tabs_clone = open_tabs.clone();
+            let node_clone = node.clone();
+            let path_clone = path_u.clone();
+            btn.connect_clicked(move |_| {
+                open_any_path(&nb_clone, &tabs_clone, &node_clone, &path_clone);
+            });
+            format_bar.append(&btn);
+        }
+
+        let container = Box::new(Orientation::Vertical, 0);
+        container.append(&format_bar);
+        container.append(&term);
+
+        notebook.append_page(&container, Some(&tab_box));
+        notebook.set_tab_reorderable(&container, true);
+        if let Some(page) = notebook.page_num(&container) {
+            notebook.set_current_page(Some(page));
+        }
+
+        let key_clone = key.clone();
+        let nb_clone = notebook.clone();
+        let tabs_rc = open_tabs.clone();
+        close_btn.connect_clicked(move |_| {
+            if let Some(idx) = nb_clone.page_num(&container) {
+                nb_clone.remove_page(Some(idx));
+            }
+            tabs_rc.borrow_mut().remove(&key_clone);
+        });
+        open_tabs.borrow_mut().insert(key, term);
+    } else if let Err(err) = open::that(path) {
+        eprintln!("Failed to open {:?}: {}", path, err);
+    }
+}
+
 fn open_graph_tab(
     notebook: &Notebook,
     open_tabs: &Rc<RefCell<HashMap<String, Terminal>>>,
@@ -184,6 +307,7 @@ fn open_graph_tab(
         data: notes_core::graph::GraphData,
         positions: Vec<(f64, f64)>,
         velocities: Vec<(f64, f64)>,
+        colors: Vec<(f64, f64, f64)>,
         pan_x: f64,
         pan_y: f64,
         scale: f64,
@@ -194,10 +318,12 @@ fn open_graph_tab(
         state.data = load_graph_data();
         let n = state.data.graph.nodes.len();
         state.positions.clear();
+        state.colors.clear();
         for i in 0..n {
             let angle = i as f64 / n.max(1) as f64 * 2.0 * PI;
             let r = 100.0;
             state.positions.push((r * angle.cos(), r * angle.sin()));
+            state.colors.push(node_color(&state.data.graph.nodes[i]));
         }
         state.velocities = vec![(0.0, 0.0); n];
         state.pan_x = 0.0;
@@ -210,6 +336,7 @@ fn open_graph_tab(
         let new_data = load_graph_data();
         let mut new_positions = Vec::new();
         let mut new_velocities = Vec::new();
+        let mut new_colors = Vec::new();
         for node in &new_data.graph.nodes {
             if let Some(idx) = state
                 .data
@@ -224,10 +351,12 @@ fn open_graph_tab(
                 new_positions.push((0.0, 0.0));
                 new_velocities.push((0.0, 0.0));
             }
+            new_colors.push(node_color(node));
         }
         state.data = new_data;
         state.positions = new_positions;
         state.velocities = new_velocities;
+        state.colors = new_colors;
         state.hover = None;
     }
 
@@ -235,6 +364,7 @@ fn open_graph_tab(
         data: load_graph_data(),
         positions: Vec::new(),
         velocities: Vec::new(),
+        colors: Vec::new(),
         pan_x: 0.0,
         pan_y: 0.0,
         scale: 1.0,
@@ -245,6 +375,7 @@ fn open_graph_tab(
         let angle = i as f64 / n.max(1) as f64 * 2.0 * PI;
         let r = 100.0;
         init.positions.push((r * angle.cos(), r * angle.sin()));
+        init.colors.push(node_color(&init.data.graph.nodes[i]));
     }
     init.velocities = vec![(0.0, 0.0); n];
     let state = Rc::new(RefCell::new(init));
@@ -365,23 +496,60 @@ fn open_graph_tab(
             let sx = x * scale + pan_x;
             let sy = y * scale + pan_y;
             let radius = 8.0 + (node.links as f64).sqrt() * 2.0;
-            ctx.arc(sx, sy, radius * scale.max(0.2), 0.0, 2.0 * PI);
-            if st.hover == Some(i) {
-                ctx.set_source_rgb(0.3, 0.7, 1.0);
+            let (r, g, b) = st.colors.get(i).copied().unwrap_or((0.2, 0.6, 0.86));
+            if node.is_directory() {
+                let fill = if st.hover == Some(i) {
+                    (0.9, 0.9, 0.9)
+                } else {
+                    (1.0, 1.0, 1.0)
+                };
+                ctx.arc(sx, sy, radius * scale.max(0.2), 0.0, 2.0 * PI);
+                ctx.set_source_rgb(fill.0, fill.1, fill.2);
+                let _ = ctx.fill_preserve();
+                ctx.set_source_rgb(0.0, 0.0, 0.0);
+                let _ = ctx.stroke();
+                ctx.arc(sx, sy, radius * scale.max(0.2) * 0.4, 0.0, 2.0 * PI);
+                ctx.set_source_rgb(0.0, 0.0, 0.0);
+                let _ = ctx.fill();
+                ctx.new_path();
             } else {
-                ctx.set_source_rgb(0.2, 0.6, 0.86);
+                ctx.arc(sx, sy, radius * scale.max(0.2), 0.0, 2.0 * PI);
+                if st.hover == Some(i) {
+                    let (lr, lg, lb) = lighten_color(r, g, b);
+                    ctx.set_source_rgb(lr, lg, lb);
+                } else {
+                    ctx.set_source_rgb(r, g, b);
+                }
+                let _ = ctx.fill_preserve();
+                ctx.set_source_rgb(0.0, 0.0, 0.0);
+                let _ = ctx.stroke();
             }
-            let _ = ctx.fill_preserve();
-            ctx.set_source_rgb(0.0, 0.0, 0.0);
-            let _ = ctx.stroke();
 
             let label_alpha = if st.hover == Some(i) { 1.0 } else { text_alpha };
             if st.hover == Some(i) || show_names {
                 let offset_x = radius * scale + 8.0;
-                let offset_y = 4.0 * scale;
+                let offset_y = -2.0 * scale;
                 ctx.move_to(sx + offset_x, sy + offset_y);
                 ctx.set_source_rgba(0.0, 0.0, 0.0, label_alpha);
                 let _ = ctx.show_text(&node.name);
+                let formats: Vec<String> = node
+                    .paths
+                    .iter()
+                    .filter_map(|p| {
+                        p.extension()
+                            .and_then(|e| e.to_str())
+                            .map(|s| s.to_ascii_uppercase())
+                    })
+                    .collect::<Vec<_>>();
+                let mut formats = formats;
+                formats.sort();
+                formats.dedup();
+                if !formats.is_empty() {
+                    let fmt_text = formats.join(", ");
+                    ctx.move_to(sx + offset_x, sy + offset_y + 14.0);
+                    ctx.set_source_rgba(0.3, 0.3, 0.3, label_alpha);
+                    let _ = ctx.show_text(&fmt_text);
+                }
             }
             ctx.new_path();
         }
@@ -480,55 +648,51 @@ fn open_graph_tab(
         let Some(note_name) = note_name_opt else {
             return;
         };
-        let path = vault_dir().join(&note_name);
-        let path_str = path.to_string_lossy();
+        let idx_opt = {
+            let st = click_state.borrow();
+            st.data.graph.nodes.iter().position(|n| n.name == note_name)
+        };
 
-        if let Some(term) = tabs_clone.borrow().get(&note_name).cloned() {
-            if let Some(page) = notebook_clone.page_num(&term) {
-                notebook_clone.set_current_page(Some(page));
-                return;
+        let mut chosen = None;
+        if let Some(idx) = idx_opt {
+            let mut st = click_state.borrow_mut();
+            let node = &mut st.data.graph.nodes[idx];
+            if let Some(md) = node
+                .paths
+                .iter()
+                .find(|p| p.extension().and_then(|e| e.to_str()) == Some("md"))
+                .cloned()
+            {
+                chosen = Some((node.clone(), md));
+            } else {
+                let mut text_paths: Vec<PathBuf> = node
+                    .paths
+                    .iter()
+                    .filter(|p| is_text_file(p))
+                    .cloned()
+                    .collect();
+                text_paths.sort_by_key(|p| {
+                    p.extension()
+                        .and_then(|s| s.to_str())
+                        .map(|s| s.to_owned())
+                        .unwrap_or_default()
+                });
+                if let Some(p) = text_paths.first() {
+                    chosen = Some((node.clone(), p.clone()));
+                } else {
+                    let new_path = vault_dir().join(format!("{}.md", node.name));
+                    let _ = std::fs::File::create(&new_path);
+                    node.paths.push(new_path.clone());
+                    chosen = Some((node.clone(), new_path));
+                }
             }
         }
-
-        let term = Terminal::new();
-        term.set_hexpand(true);
-        term.set_vexpand(true);
-        term.spawn_async(
-            PtyFlags::DEFAULT,
-            None::<&str>,
-            &["nvim", &path_str],
-            &[],
-            glib::SpawnFlags::SEARCH_PATH,
-            || {},
-            -1,
-            None::<&gio::Cancellable>,
-            |_| {},
-        );
-
-        let label = Label::new(Some(&note_name));
-        let close_btn = Button::new();
-        close_btn.set_child(Some(&Image::from_icon_name("window-close-symbolic")));
-        close_btn.set_size_request(16, 16);
-        let tab_box = Box::new(Orientation::Horizontal, 4);
-        tab_box.append(&label);
-        tab_box.append(&close_btn);
-        notebook_clone.append_page(&term, Some(&tab_box));
-        notebook_clone.set_tab_reorderable(&term, true);
-        if let Some(page) = notebook_clone.page_num(&term) {
-            notebook_clone.set_current_page(Some(page));
+        if let Some((node, path)) = chosen {
+            open_any_path(&notebook_clone, &tabs_clone, &node, &path);
+            let mut st = click_state.borrow_mut();
+            notes_core::graph::update_open_notes(&mut st.data, &[]);
+            click_area.queue_draw();
         }
-
-        let note_key = note_name.clone();
-        let nb_clone = notebook_clone.clone();
-        let tabs_rc = tabs_clone.clone();
-        let term_for_close = term.clone();
-        close_btn.connect_clicked(move |_| {
-            if let Some(idx) = nb_clone.page_num(&term_for_close) {
-                nb_clone.remove_page(Some(idx));
-            }
-            tabs_rc.borrow_mut().remove(&note_key);
-        });
-        tabs_clone.borrow_mut().insert(note_name, term);
     });
     area.add_controller(click);
 

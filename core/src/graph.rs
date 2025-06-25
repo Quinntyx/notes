@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::note::vault_dir;
 
@@ -11,12 +11,59 @@ pub struct Graph {
     pub edges: Vec<(usize, usize)>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Node {
+    /// Base name of the note without extension
     pub name: String,
-    pub path: PathBuf,
+    /// All files that belong to this logical node
+    pub paths: Vec<PathBuf>,
     /// Number of links connected to this node (in or out)
     pub links: usize,
+}
+
+impl Node {
+    /// Returns true if this logical node only represents directories.
+    pub fn is_directory(&self) -> bool {
+        self.paths.iter().all(|p| p.is_dir())
+    }
+
+    /// Determine the primary file format of this node.
+    ///
+    /// Binary formats have highest priority, followed by text formats in
+    /// alphabetical order. Markdown is only used if no other text format exists.
+    pub fn primary_file_format(&self) -> Option<String> {
+        let mut binaries = Vec::new();
+        let mut texts = Vec::new();
+        let mut has_md = false;
+        for path in &self.paths {
+            if path.is_dir() {
+                continue;
+            }
+            if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+                let ext_lc = ext.to_ascii_lowercase();
+                if is_text_file(path) {
+                    if ext_lc == "md" {
+                        has_md = true;
+                    } else {
+                        texts.push(ext_lc);
+                    }
+                } else {
+                    binaries.push(ext_lc);
+                }
+            }
+        }
+        binaries.sort();
+        texts.sort();
+        if let Some(ext) = binaries.first() {
+            Some(ext.clone())
+        } else if let Some(ext) = texts.first() {
+            Some(ext.clone())
+        } else if has_md {
+            Some("md".into())
+        } else {
+            None
+        }
+    }
 }
 
 fn normalize(s: &str) -> String {
@@ -38,6 +85,10 @@ fn normalize(s: &str) -> String {
 
 fn canonicalize(s: &str) -> String {
     normalize(s).replace(' ', "")
+}
+
+fn is_text_file(path: &Path) -> bool {
+    fs::read_to_string(path).is_ok()
 }
 
 fn is_boundary(text: &str, idx: usize) -> bool {
@@ -105,22 +156,21 @@ pub fn build_graph() -> Graph {
             let path = entry.path();
             if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
                 let canon = canonicalize(stem);
-                if !index_map.contains_key(&canon) {
-                    let name = path
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .unwrap_or_default()
-                        .to_string();
+                let idx = if let Some(idx) = index_map.get(&canon).copied() {
+                    idx
+                } else {
                     let idx = nodes.len();
                     nodes.push(Node {
-                        name,
-                        path: path.clone(),
+                        name: stem.to_string(),
+                        paths: Vec::new(),
                         links: 0,
                     });
                     index_map.insert(canon.clone(), idx);
                     canonical.push(canon);
                     normalized.push(normalize(stem));
-                }
+                    idx
+                };
+                nodes[idx].paths.push(path.clone());
             }
         }
     }
@@ -129,15 +179,21 @@ pub fn build_graph() -> Graph {
     let mut edges: HashSet<(usize, usize)> = HashSet::new();
 
     for i in 0..nodes.len() {
-        let path = &nodes[i].path;
-        if let Ok(content) = fs::read_to_string(path) {
-            let text = normalize(&content);
-            for j in find_unique_links(&text, &canonical, &normalized) {
-                if i == j {
-                    continue;
+        let mut content = String::new();
+        for path in &nodes[i].paths {
+            if is_text_file(path) {
+                if let Ok(text) = fs::read_to_string(path) {
+                    content.push_str(&text);
+                    content.push('\n');
                 }
-                edges.insert((i, j));
             }
+        }
+        let text = normalize(&content);
+        for j in find_unique_links(&text, &canonical, &normalized) {
+            if i == j {
+                continue;
+            }
+            edges.insert((i, j));
         }
     }
 
@@ -203,27 +259,44 @@ pub fn load_graph_data() -> GraphData {
     let mut normalized = Vec::new();
     let mut contents = Vec::new();
 
+    let mut index_map: HashMap<String, usize> = HashMap::new();
+
     if let Ok(entries) = fs::read_dir(vault_dir()) {
         for entry in entries.flatten() {
             let path = entry.path();
-            if let (Some(stem), Some(filename)) = (
-                path.file_stem().and_then(|s| s.to_str()),
-                path.file_name().and_then(|s| s.to_str()),
-            ) {
+            if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
                 let canon = canonicalize(stem);
-                if !canonical.contains(&canon) {
+                let idx = if let Some(idx) = index_map.get(&canon).copied() {
+                    idx
+                } else {
+                    let idx = nodes.len();
                     nodes.push(Node {
-                        name: filename.to_string(),
-                        path: path.clone(),
+                        name: stem.to_string(),
+                        paths: Vec::new(),
                         links: 0,
                     });
+                    index_map.insert(canon.clone(), idx);
                     canonical.push(canon);
                     normalized.push(normalize(stem));
-                    let text = fs::read_to_string(&path).unwrap_or_default();
-                    contents.push(normalize(&text));
+                    contents.push(String::new());
+                    idx
+                };
+                nodes[idx].paths.push(path.clone());
+            }
+        }
+    }
+
+    for (i, node) in nodes.iter().enumerate() {
+        let mut text = String::new();
+        for path in &node.paths {
+            if is_text_file(path) {
+                if let Ok(t) = fs::read_to_string(path) {
+                    text.push_str(&t);
+                    text.push('\n');
                 }
             }
         }
+        contents[i] = normalize(&text);
     }
 
     let mut data = GraphData {
@@ -244,10 +317,16 @@ pub fn update_open_notes(data: &mut GraphData, open_notes: &[String]) {
         if let Some(stem) = PathBuf::from(name).file_stem().and_then(|s| s.to_str()) {
             let canon = canonicalize(stem);
             if let Some(idx) = data.canonical.iter().position(|c| c == &canon) {
-                let path = &data.graph.nodes[idx].path;
-                if let Ok(content) = fs::read_to_string(path) {
-                    data.contents[idx] = normalize(&content);
+                let mut text = String::new();
+                for path in &data.graph.nodes[idx].paths {
+                    if is_text_file(path) {
+                        if let Ok(content) = fs::read_to_string(path) {
+                            text.push_str(&content);
+                            text.push('\n');
+                        }
+                    }
                 }
+                data.contents[idx] = normalize(&text);
             }
         }
     }
