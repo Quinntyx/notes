@@ -12,6 +12,11 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 pub fn run_gui() {
+    // Fallback to the memory backend if no schemas are installed.
+    if std::env::var("GSETTINGS_BACKEND").is_err() {
+        let _ = glib::setenv("GSETTINGS_BACKEND", "memory", false);
+    }
+
     let app = Application::builder()
         .application_id("com.example.notes")
         .build();
