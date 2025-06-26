@@ -138,7 +138,9 @@ fn apply_material_css() {
             + "notebook tab:hover { background: #e5e5e5; border-bottom: none; }\n"
             + "notebook tab:checked { background: #e0e0e0; border-bottom: none; box-shadow: none; border-image: none; }\n"
             + ".close-btn { background: transparent; border: none; padding: 0; }\n"
-            + ".tab-ext { background: #e0e0e0; color: #555555; font-size: 70%; padding: 1px 6px; border-radius: 8px; margin-left: 6px; margin-right: 6px; }\n"
+            + ".tab-ext { background: #f0f0f0; color: #555555; font-size: 40%; padding: 0 4px; border-radius: 8px; margin-left: 6px; margin-right: 6px; }\n"
+            + "notebook tab:checked .tab-ext { background: #cfcfcf; }\n"
+            + ".graph-btn { padding: 4px 8px; }\n"
             + ".format-bar { padding: 2px 4px; min-height: 16px; }\n"
             + ".format-bar button { background: transparent; border-radius: 8px; padding: 1px 16px; margin-top: 2px; margin-bottom: 2px; border: none; box-shadow: none; }\n"
             + ".format-bar button:hover:enabled { background: #f2f2f2; }\n"
@@ -343,6 +345,7 @@ fn open_any_path(
         close_btn.set_child(Some(&Image::from_file(icons_dir.join("close.svg"))));
         close_btn.set_size_request(16, 16);
         let tab_box = Box::new(Orientation::Horizontal, 4);
+        close_btn.set_margin_start(8);
         tab_box.append(&ext_label);
         tab_box.append(&label);
         tab_box.append(&close_btn);
@@ -522,16 +525,20 @@ fn open_graph_tab(
     container.set_vexpand(true);
     container.set_child(Some(&area));
 
-    let button_box = Box::new(Orientation::Vertical, 5);
+    let button_box = Box::new(Orientation::Vertical, 10);
     button_box.set_halign(gtk4::Align::Start);
     button_box.set_valign(gtk4::Align::End);
+    button_box.set_margin_start(10);
+    button_box.set_margin_bottom(10);
 
     let home_button = Button::new();
+    home_button.add_css_class("graph-btn");
     home_button.set_child(Some(&Image::from_file(icons_dir.join("home.svg"))));
-    home_button.set_size_request(40, 40);
+    home_button.set_size_request(28, 28);
     let new_button = Button::new();
+    new_button.add_css_class("graph-btn");
     new_button.set_child(Some(&Image::from_file(icons_dir.join("add.svg"))));
-    new_button.set_size_request(40, 40);
+    new_button.set_size_request(28, 28);
     button_box.append(&home_button);
     button_box.append(&new_button);
     container.add_overlay(&button_box);
@@ -600,7 +607,14 @@ fn open_graph_tab(
         let pan_x = st.pan_x + width as f64 / 2.0;
         let pan_y = st.pan_y + height as f64 / 2.0;
 
-        ctx.set_line_width(1.0);
+        let mut edge_width = 1.0;
+        if scale > 0.4 {
+            edge_width = 1.5;
+        }
+        if scale > 0.6 {
+            edge_width = 2.0;
+        }
+        ctx.set_line_width(edge_width);
         ctx.set_source_rgb(0.6, 0.6, 0.6);
         for &(from, to) in &graph.edges {
             let (sx, sy) = positions[from];
@@ -631,9 +645,7 @@ fn open_graph_tab(
                 };
                 ctx.arc(sx, sy, radius * scale.max(0.2), 0.0, 2.0 * PI);
                 ctx.set_source_rgb(fill.0, fill.1, fill.2);
-                let _ = ctx.fill_preserve();
-                ctx.set_source_rgb(0.0, 0.0, 0.0);
-                let _ = ctx.stroke();
+                let _ = ctx.fill();
                 ctx.arc(sx, sy, radius * scale.max(0.2) * 0.4, 0.0, 2.0 * PI);
                 ctx.set_source_rgb(0.0, 0.0, 0.0);
                 let _ = ctx.fill();
@@ -646,9 +658,7 @@ fn open_graph_tab(
                 } else {
                     ctx.set_source_rgb(r, g, b);
                 }
-                let _ = ctx.fill_preserve();
-                ctx.set_source_rgb(0.0, 0.0, 0.0);
-                let _ = ctx.stroke();
+                let _ = ctx.fill();
             }
 
             let label_alpha = if st.hover == Some(i) { 1.0 } else { text_alpha };
