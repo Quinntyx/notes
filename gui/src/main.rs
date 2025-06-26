@@ -13,6 +13,7 @@ use vte4::{PtyFlags, Terminal, TerminalExtManual};
 use notes_core::note::{set_vault_dir, vault_dir};
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::fs;
 use std::hash::Hasher;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -74,16 +75,47 @@ fn ensure_rubik_font() {
         let font_dir = proj.data_dir().join("fonts");
         let _ = std::fs::create_dir_all(&font_dir);
         let font_path = font_dir.join("Rubik-Regular.ttf");
-        if !font_path.exists() {
-            if let Ok(bytes) = reqwest::get(RUBIK_URL).and_then(|r| r.bytes()) {
-                let _ = std::fs::write(&font_path, bytes);
-                let _ = std::process::Command::new("fc-cache")
-                    .arg("-f")
-                    .arg(&font_dir)
-                    .status();
+        if font_path.exists() {
+            println!("Rubik font already present at {}", font_path.display());
+        } else {
+            println!("Downloading Rubik font...");
+            match reqwest::get(RUBIK_URL).and_then(|r| r.bytes()) {
+                Ok(bytes) => {
+                    if std::fs::write(&font_path, &bytes).is_ok() {
+                        println!("Saved Rubik font to {}", font_path.display());
+                        let _ = std::process::Command::new("fc-cache")
+                            .arg("-f")
+                            .arg(&font_dir)
+                            .status();
+                    } else {
+                        eprintln!("Failed to write Rubik font");
+                    }
+                }
+                Err(e) => eprintln!("Failed to download Rubik font: {}", e),
             }
         }
     }
+}
+
+fn ensure_icons() -> PathBuf {
+    let mut dir = PathBuf::new();
+    if let Some(proj) = ProjectDirs::from("com", "example", "notes") {
+        dir = proj.data_dir().join("icons");
+        let _ = fs::create_dir_all(&dir);
+        let icons: [(&str, &[u8]); 4] = [
+            ("close.svg", include_bytes!("../icons/close.svg")),
+            ("home.svg", include_bytes!("../icons/home.svg")),
+            ("add.svg", include_bytes!("../icons/add.svg")),
+            ("graph.svg", include_bytes!("../icons/graph.svg")),
+        ];
+        for (name, data) in icons.iter() {
+            let path = dir.join(name);
+            if !path.exists() {
+                let _ = fs::write(&path, data);
+            }
+        }
+    }
+    dir
 }
 
 fn apply_material_css() {
@@ -98,9 +130,11 @@ fn apply_material_css() {
             font_path.display()
         ) + "* { font-family: 'Rubik', sans-serif; font-size: 14px; color: #000000; }\n"
             + "window { background: #FAFAFA; }\n"
-            + "button { background: #6200EE; color: white; border-radius: 4px; padding: 6px 12px; }\n"
-            + "entry { background: #FFFFFF; color: black; border-radius: 4px; padding: 6px; }\n"
+            + "button { background: #24283b; color: white; border-radius: 8px; padding: 6px 12px; }\n"
+            + "entry { background: #FFFFFF; color: black; border-radius: 8px; padding: 6px; }\n"
             + "notebook tab { padding: 2px 4px; min-height: 20px; }\n"
+            + "notebook tab:checked { background: #e0e0e0; border-bottom: none; }\n"
+            + ".close-btn { background: transparent; border: none; padding: 0; }\n"
             + ".format-bar { padding: 2px; min-height: 20px; }\n"
             + ".format-bar button { padding: 2px 4px; }\n";
         provider.load_from_data(&css);
@@ -117,6 +151,7 @@ fn apply_material_css() {
 
 pub fn run_gui() {
     ensure_rubik_font();
+    let icons_dir = ensure_icons();
     let app = Application::builder()
         .application_id("com.example.notes")
         .build();
@@ -125,8 +160,8 @@ pub fn run_gui() {
         apply_material_css();
     });
 
-    app.connect_activate(|app| {
-        show_dashboard(app);
+    app.connect_activate(move |app| {
+        show_dashboard(app, icons_dir.clone());
     });
 
     // Pass an empty argument list to avoid `g_application_open` from
@@ -136,7 +171,7 @@ pub fn run_gui() {
     app.run_with_args::<&str>(&[]);
 }
 
-fn show_dashboard(app: &Application) {
+fn show_dashboard(app: &Application, icons_dir: PathBuf) {
     let window = ApplicationWindow::builder()
         .application(app)
         .title("Select Vault")
@@ -158,20 +193,20 @@ fn show_dashboard(app: &Application) {
     window.set_child(Some(&vbox));
 
     button.connect_clicked(
-        glib::clone!(@weak window, @weak app, @weak entry => move |_| {
+        glib::clone!(@weak window, @weak app, @weak entry, @strong icons_dir => move |_| {
             let path_str = entry.text();
             if !path_str.is_empty() {
                 let dir = expand_tilde(path_str.as_str());
                 set_vault_dir(dir);
                 window.close();
-                open_main_window(&app);
+                open_main_window(&app, icons_dir.clone());
             }
         }),
     );
     window.show();
 }
 
-fn open_main_window(app: &Application) {
+fn open_main_window(app: &Application, icons_dir: PathBuf) {
     let notebook = Notebook::new();
     notebook.set_hexpand(true);
     notebook.set_vexpand(true);
@@ -251,7 +286,7 @@ fn open_main_window(app: &Application) {
         }));
     window.add_controller(key_controller);
 
-    open_graph_tab(&notebook, &open_tabs, &graph_tab, &graph_cb);
+    open_graph_tab(&notebook, &open_tabs, &graph_tab, &graph_cb, &icons_dir);
 
     window.show();
 }
@@ -261,6 +296,7 @@ fn open_any_path(
     open_tabs: &Rc<RefCell<HashMap<String, Terminal>>>,
     node: &notes_core::graph::Node,
     path: &Path,
+    icons_dir: PathBuf,
 ) {
     let key = path.to_string_lossy().to_string();
     if is_text_file(path) {
@@ -288,7 +324,8 @@ fn open_any_path(
 
         let label = Label::new(path.file_name().and_then(|s| s.to_str()));
         let close_btn = Button::new();
-        close_btn.set_child(Some(&Image::from_icon_name("window-close-symbolic")));
+        close_btn.add_css_class("close-btn");
+        close_btn.set_child(Some(&Image::from_file(icons_dir.join("close.svg"))));
         close_btn.set_size_request(16, 16);
         let tab_box = Box::new(Orientation::Horizontal, 4);
         tab_box.append(&label);
@@ -313,8 +350,15 @@ fn open_any_path(
             let tabs_clone = open_tabs.clone();
             let node_clone = node.clone();
             let path_clone = path_u.clone();
+            let icons_dir_clone = icons_dir.clone();
             btn.connect_clicked(move |_| {
-                open_any_path(&nb_clone, &tabs_clone, &node_clone, &path_clone);
+                open_any_path(
+                    &nb_clone,
+                    &tabs_clone,
+                    &node_clone,
+                    &path_clone,
+                    icons_dir_clone.clone(),
+                );
             });
             format_bar.append(&btn);
         }
@@ -349,7 +393,9 @@ fn open_graph_tab(
     open_tabs: &Rc<RefCell<HashMap<String, Terminal>>>,
     graph_tab: &Rc<RefCell<Option<Overlay>>>,
     graph_cb: &Rc<RefCell<Option<std::boxed::Box<dyn Fn(String)>>>>,
+    icons_dir: &Path,
 ) {
+    let icons_dir = icons_dir.to_path_buf();
     use notes_core::graph::{load_graph_data, update_open_notes};
     use std::f64::consts::PI;
 
@@ -459,10 +505,10 @@ fn open_graph_tab(
     button_box.set_valign(gtk4::Align::End);
 
     let home_button = Button::new();
-    home_button.set_child(Some(&Image::from_icon_name("go-home-symbolic")));
+    home_button.set_child(Some(&Image::from_file(icons_dir.join("home.svg"))));
     home_button.set_size_request(40, 40);
     let new_button = Button::new();
-    new_button.set_child(Some(&Image::from_icon_name("document-new-symbolic")));
+    new_button.set_child(Some(&Image::from_file(icons_dir.join("add.svg"))));
     new_button.set_size_request(40, 40);
     button_box.append(&home_button);
     button_box.append(&new_button);
@@ -682,6 +728,7 @@ fn open_graph_tab(
     let click_area = area.clone();
     let notebook_clone = notebook.clone();
     let tabs_clone = open_tabs.clone();
+    let click_icons_dir = icons_dir.clone();
     let click = gtk4::GestureClick::new();
     click.connect_released(move |_, _n, x, y| {
         let note_name_opt = {
@@ -746,7 +793,13 @@ fn open_graph_tab(
             }
         }
         if let Some((node, path)) = chosen {
-            open_any_path(&notebook_clone, &tabs_clone, &node, &path);
+            open_any_path(
+                &notebook_clone,
+                &tabs_clone,
+                &node,
+                &path,
+                click_icons_dir.clone(),
+            );
             let mut st = click_state.borrow_mut();
             notes_core::graph::update_open_notes(&mut st.data, &[]);
             click_area.queue_draw();
@@ -821,7 +874,7 @@ fn open_graph_tab(
         }
     });
 
-    let graph_icon = Image::from_icon_name("media-playlist-consecutive-symbolic");
+    let graph_icon = Image::from_file(icons_dir.join("graph.svg"));
     notebook.append_page(&container, Some(&graph_icon));
     notebook.set_tab_reorderable(&container, false);
     if let Some(page) = notebook.page_num(&container) {

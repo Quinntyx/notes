@@ -17,6 +17,7 @@ Only put UI and event-handling logic here. Core algorithms should remain in the 
 - Node format indicators are rendered in ALL CAPS across the interface.
 - All UI fonts use the Google Rubik family. Do **not** commit font binaries; the application downloads the files at runtime if missing.
 - Follow Google Material Design colors and spacing. Use soft corner radius on buttons and default to the Material light theme with window background `#FAFAFA`.
-- Accent color `#6200EE` should style primary buttons.
-- Avoid committing any binary resources such as fonts or images. Fetch them on startup if needed.
+- Accent color `#24283b` should style primary buttons and tabs.
+- Material Symbols icons are stored as SVGs under `icons/` and loaded at runtime. Avoid adding binary assets like `.ttf` to the repo; fonts and icons are downloaded on startup.
+- The application logs when the Rubik font is fetched so you can confirm it was downloaded.
 - Register the CSS provider in the application's `startup` signal so it overrides any system theme.
