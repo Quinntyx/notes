@@ -20,6 +20,8 @@ Only put UI and event-handling logic here. Core algorithms should remain in the 
 - Accent color `#04a5e5` should style primary buttons and tabs.
 - Tabs use pill-shaped buttons with generous horizontal padding and light gray headers so the menu bar and tab bar share the same `#f5f5f5` background.
 - Format bar buttons have transparent backgrounds; the active or hovered format shows a gray highlight.
+- The "formats bar" refers to the row of buttons for each format a logical node has. The button for the format currently
+  open in a tab should be disabled and tinted gray.
 - Material Symbols icons are stored as SVGs under `icons/` and loaded at runtime. Avoid adding binary assets like `.ttf` to the repo; fonts and icons are downloaded on startup.
 - The application logs when the Rubik font is fetched so you can confirm it was downloaded.
 - Register the CSS provider in the application's `startup` signal so it overrides any system theme.

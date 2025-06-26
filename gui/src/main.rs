@@ -134,13 +134,14 @@ fn apply_material_css() {
             + "entry { background: #FFFFFF; color: black; border-radius: 8px; padding: 6px; }\n"
             + "notebook header { background: #f5f5f5; }\n"
             + "menubar { background: #f5f5f5; }\n"
-            + "notebook tab { padding: 6px 12px; min-height: 20px; border-radius: 12px; margin: 2px; }\n"
+            + "notebook tab { padding: 2px 12px; min-height: 20px; border-radius: 12px; margin: 4px 2px; }\n"
+            + "notebook tab:hover { background: #ededed; }\n"
             + "notebook tab:checked { background: #e0e0e0; border-bottom: none; box-shadow: none; border-image: none; }\n"
             + ".close-btn { background: transparent; border: none; padding: 0; }\n"
-            + ".format-bar { padding: 4px 4px; min-height: 20px; }\n"
-            + ".format-bar button { background: transparent; border-radius: 8px; padding: 2px 12px; }\n"
-            + ".format-bar button:hover { background: #f2f2f2; }\n"
-            + ".format-bar button:checked { background: #e0e0e0; }\n";
+            + ".format-bar { padding: 2px 4px; min-height: 20px; }\n"
+            + ".format-bar button { background: transparent; border-radius: 8px; padding: 1px 16px; margin-top: 2px; margin-bottom: 2px; border: none; box-shadow: none; }\n"
+            + ".format-bar button:hover:enabled { background: #f2f2f2; }\n"
+            + ".format-bar button:disabled { background: #e0e0e0; color: #555555; }\n";
         provider.load_from_data(&css);
         gtk4::style_context_add_provider_for_display(
             &display,
@@ -215,7 +216,8 @@ fn open_main_window(app: &Application, icons_dir: PathBuf) {
     notebook.set_hexpand(true);
     notebook.set_vexpand(true);
 
-    let open_tabs: Rc<RefCell<HashMap<String, Terminal>>> = Rc::new(RefCell::new(HashMap::new()));
+    let open_tabs: Rc<RefCell<HashMap<String, gtk4::Widget>>> =
+        Rc::new(RefCell::new(HashMap::new()));
     let graph_tab: Rc<RefCell<Option<Overlay>>> = Rc::new(RefCell::new(None));
     let graph_cb: Rc<RefCell<Option<std::boxed::Box<dyn Fn(String)>>>> =
         Rc::new(RefCell::new(None));
@@ -297,15 +299,15 @@ fn open_main_window(app: &Application, icons_dir: PathBuf) {
 
 fn open_any_path(
     notebook: &Notebook,
-    open_tabs: &Rc<RefCell<HashMap<String, Terminal>>>,
+    open_tabs: &Rc<RefCell<HashMap<String, gtk4::Widget>>>,
     node: &notes_core::graph::Node,
     path: &Path,
     icons_dir: PathBuf,
 ) {
     let key = path.to_string_lossy().to_string();
     if is_text_file(path) {
-        if let Some(term) = open_tabs.borrow().get(&key).cloned() {
-            if let Some(page) = notebook.page_num(&term) {
+        if let Some(widget) = open_tabs.borrow().get(&key).cloned() {
+            if let Some(page) = notebook.page_num(&widget) {
                 notebook.set_current_page(Some(page));
                 return;
             }
@@ -364,6 +366,9 @@ fn open_any_path(
                     icons_dir_clone.clone(),
                 );
             });
+            if path_u == path {
+                btn.set_sensitive(false);
+            }
             format_bar.append(&btn);
         }
 
@@ -380,13 +385,16 @@ fn open_any_path(
         let key_clone = key.clone();
         let nb_clone = notebook.clone();
         let tabs_rc = open_tabs.clone();
+        let container_for_close = container.clone();
         close_btn.connect_clicked(move |_| {
-            if let Some(idx) = nb_clone.page_num(&container) {
+            if let Some(idx) = nb_clone.page_num(&container_for_close) {
                 nb_clone.remove_page(Some(idx));
             }
             tabs_rc.borrow_mut().remove(&key_clone);
         });
-        open_tabs.borrow_mut().insert(key, term);
+        open_tabs
+            .borrow_mut()
+            .insert(key, container.clone().upcast::<gtk4::Widget>());
     } else if let Err(err) = open::that(path) {
         eprintln!("Failed to open {:?}: {}", path, err);
     }
@@ -394,7 +402,7 @@ fn open_any_path(
 
 fn open_graph_tab(
     notebook: &Notebook,
-    open_tabs: &Rc<RefCell<HashMap<String, Terminal>>>,
+    open_tabs: &Rc<RefCell<HashMap<String, gtk4::Widget>>>,
     graph_tab: &Rc<RefCell<Option<Overlay>>>,
     graph_cb: &Rc<RefCell<Option<std::boxed::Box<dyn Fn(String)>>>>,
     icons_dir: &Path,
@@ -879,7 +887,8 @@ fn open_graph_tab(
     });
 
     let graph_icon = Image::from_file(icons_dir.join("graph.svg"));
-    graph_icon.set_pixel_size(12);
+    graph_icon.set_pixel_size(16);
+    graph_icon.set_size_request(16, 16);
     notebook.append_page(&container, Some(&graph_icon));
     notebook.set_tab_reorderable(&container, false);
     if let Some(page) = notebook.page_num(&container) {
@@ -940,7 +949,7 @@ fn show_new_note_popover(
 
 fn close_current_tab(
     notebook: &Notebook,
-    open_tabs: &Rc<RefCell<HashMap<String, Terminal>>>,
+    open_tabs: &Rc<RefCell<HashMap<String, gtk4::Widget>>>,
     graph_tab: &Rc<RefCell<Option<Overlay>>>,
 ) {
     if let Some(current) = notebook.current_page() {
@@ -950,17 +959,15 @@ fn close_current_tab(
             }
         }
         if let Some(widget) = notebook.nth_page(Some(current)) {
-            if let Ok(term) = widget.clone().downcast::<Terminal>() {
-                let mut remove_key = None;
-                for (k, v) in open_tabs.borrow().iter() {
-                    if v == &term {
-                        remove_key = Some(k.clone());
-                        break;
-                    }
+            let mut remove_key = None;
+            for (k, w) in open_tabs.borrow().iter() {
+                if w == &widget {
+                    remove_key = Some(k.clone());
+                    break;
                 }
-                if let Some(k) = remove_key {
-                    open_tabs.borrow_mut().remove(&k);
-                }
+            }
+            if let Some(k) = remove_key {
+                open_tabs.borrow_mut().remove(&k);
             }
         }
         notebook.remove_page(Some(current));
