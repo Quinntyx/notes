@@ -99,9 +99,12 @@ pub fn run_gui() {
             .expect("failed to resolve data dir");
         let font_path = font_dir.join("Rubik-Regular.ttf");
         let css = format!(
-            "@font-face {{ font-family: 'Rubik'; src: url('file://{}'); }}\n* {{ font-family: 'Rubik', sans-serif; font-size: 14px; }}\nwindow {{ background: #FAFAFA; }}\nbutton {{ background: #6200EE; color: white; border-radius: 4px; padding: 6px 12px; }}\nentry {{ border-radius: 4px; padding: 6px; }}\n",
+            "@font-face {{ font-family: 'Rubik'; src: url('file://{}'); }}\n",
             font_path.display()
-        );
+        ) + "* { font-family: 'Rubik', sans-serif; font-size: 14px; color: #FFFFFF; }\n"
+            + "window { background: #121212; }\n"
+            + "button { background: #6200EE; color: white; border-radius: 4px; padding: 6px 12px; }\n"
+            + "entry { background: #1E1E1E; color: white; border-radius: 4px; padding: 6px; }\n";
         provider.load_from_data(&css);
         gtk4::style_context_add_provider_for_display(
             &display,
@@ -503,7 +506,7 @@ fn open_graph_tab(
         let graph = &st.data.graph;
         let positions = &st.positions;
 
-        ctx.set_source_rgb(1.0, 1.0, 1.0);
+        ctx.set_source_rgb(0.07, 0.07, 0.07);
         ctx.paint().unwrap();
         ctx.select_font_face("Rubik", cairo::FontSlant::Normal, cairo::FontWeight::Normal);
         ctx.set_font_size(13.0);
@@ -517,7 +520,7 @@ fn open_graph_tab(
         let pan_y = st.pan_y + height as f64 / 2.0;
 
         ctx.set_line_width(1.0);
-        ctx.set_source_rgb(0.6, 0.6, 0.6);
+        ctx.set_source_rgb(0.7, 0.7, 0.7);
         for &(from, to) in &graph.edges {
             let (sx, sy) = positions[from];
             let (tx, ty) = positions[to];
@@ -541,17 +544,17 @@ fn open_graph_tab(
             let (r, g, b) = st.colors.get(i).copied().unwrap_or((0.2, 0.6, 0.86));
             if node.is_directory() {
                 let fill = if st.hover == Some(i) {
-                    (0.9, 0.9, 0.9)
+                    (0.7, 0.7, 0.7)
                 } else {
-                    (1.0, 1.0, 1.0)
+                    (0.5, 0.5, 0.5)
                 };
                 ctx.arc(sx, sy, radius * scale.max(0.2), 0.0, 2.0 * PI);
                 ctx.set_source_rgb(fill.0, fill.1, fill.2);
                 let _ = ctx.fill_preserve();
-                ctx.set_source_rgb(0.0, 0.0, 0.0);
+                ctx.set_source_rgb(1.0, 1.0, 1.0);
                 let _ = ctx.stroke();
                 ctx.arc(sx, sy, radius * scale.max(0.2) * 0.4, 0.0, 2.0 * PI);
-                ctx.set_source_rgb(0.0, 0.0, 0.0);
+                ctx.set_source_rgb(1.0, 1.0, 1.0);
                 let _ = ctx.fill();
                 ctx.new_path();
             } else {
@@ -563,7 +566,7 @@ fn open_graph_tab(
                     ctx.set_source_rgb(r, g, b);
                 }
                 let _ = ctx.fill_preserve();
-                ctx.set_source_rgb(0.0, 0.0, 0.0);
+                ctx.set_source_rgb(1.0, 1.0, 1.0);
                 let _ = ctx.stroke();
             }
 
@@ -572,7 +575,7 @@ fn open_graph_tab(
                 let offset_x = radius * scale + 8.0;
                 let offset_y = -2.0 * scale;
                 ctx.move_to(sx + offset_x, sy + offset_y);
-                ctx.set_source_rgba(0.0, 0.0, 0.0, label_alpha);
+                ctx.set_source_rgba(1.0, 1.0, 1.0, label_alpha);
                 let _ = ctx.show_text(&node.name);
                 let formats: Vec<String> = node
                     .paths
@@ -589,7 +592,7 @@ fn open_graph_tab(
                 if !formats.is_empty() {
                     let fmt_text = formats.join(", ");
                     ctx.move_to(sx + offset_x, sy + offset_y + 14.0);
-                    ctx.set_source_rgba(0.3, 0.3, 0.3, label_alpha);
+                    ctx.set_source_rgba(0.7, 0.7, 0.7, label_alpha);
                     let _ = ctx.show_text(&fmt_text);
                 }
             }
