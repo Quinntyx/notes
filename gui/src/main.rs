@@ -132,11 +132,15 @@ fn apply_material_css() {
             + "window { background: #FAFAFA; }\n"
             + "button { background: #04a5e5; color: white; border-radius: 8px; padding: 6px 12px; }\n"
             + "entry { background: #FFFFFF; color: black; border-radius: 8px; padding: 6px; }\n"
-            + "notebook tab { padding: 2px 4px; min-height: 20px; }\n"
+            + "notebook header { background: #f5f5f5; }\n"
+            + "menubar { background: #f5f5f5; }\n"
+            + "notebook tab { padding: 6px 12px; min-height: 20px; border-radius: 12px; margin: 2px; }\n"
             + "notebook tab:checked { background: #e0e0e0; border-bottom: none; box-shadow: none; border-image: none; }\n"
             + ".close-btn { background: transparent; border: none; padding: 0; }\n"
-            + ".format-bar { padding: 2px; min-height: 20px; }\n"
-            + ".format-bar button { padding: 2px 4px; }\n";
+            + ".format-bar { padding: 4px 4px; min-height: 20px; }\n"
+            + ".format-bar button { background: transparent; border-radius: 8px; padding: 2px 12px; }\n"
+            + ".format-bar button:hover { background: #f2f2f2; }\n"
+            + ".format-bar button:checked { background: #e0e0e0; }\n";
         provider.load_from_data(&css);
         gtk4::style_context_add_provider_for_display(
             &display,
@@ -875,7 +879,7 @@ fn open_graph_tab(
     });
 
     let graph_icon = Image::from_file(icons_dir.join("graph.svg"));
-    graph_icon.set_pixel_size(16);
+    graph_icon.set_pixel_size(12);
     notebook.append_page(&container, Some(&graph_icon));
     notebook.set_tab_reorderable(&container, false);
     if let Some(page) = notebook.page_num(&container) {
