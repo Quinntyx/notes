@@ -86,12 +86,7 @@ fn ensure_rubik_font() {
     }
 }
 
-pub fn run_gui() {
-    ensure_rubik_font();
-    let app = Application::builder()
-        .application_id("com.example.notes")
-        .build();
-
+fn apply_material_css() {
     if let Some(display) = gdk::Display::default() {
         let provider = gtk4::CssProvider::new();
         let font_dir = ProjectDirs::from("com", "example", "notes")
@@ -112,6 +107,20 @@ pub fn run_gui() {
             gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
         );
     }
+    if let Some(settings) = gtk4::Settings::default() {
+        settings.set_gtk_application_prefer_dark_theme(true);
+    }
+}
+
+pub fn run_gui() {
+    ensure_rubik_font();
+    let app = Application::builder()
+        .application_id("com.example.notes")
+        .build();
+
+    app.connect_startup(|_| {
+        apply_material_css();
+    });
 
     app.connect_activate(|app| {
         show_dashboard(app);

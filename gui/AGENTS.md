@@ -19,3 +19,4 @@ Only put UI and event-handling logic here. Core algorithms should remain in the 
 - Follow Google Material Design colors and spacing. Use soft corner radius on buttons and default to the Material dark theme with window background `#121212`.
 - Accent color `#6200EE` should style primary buttons.
 - Avoid committing any binary resources such as fonts or images. Fetch them on startup if needed.
+- Register the CSS provider in the application's `startup` signal so it overrides any system theme.
