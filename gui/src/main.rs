@@ -130,10 +130,10 @@ fn apply_material_css() {
             font_path.display()
         ) + "* { font-family: 'Rubik', sans-serif; font-size: 14px; color: #000000; }\n"
             + "window { background: #FAFAFA; }\n"
-            + "button { background: #24283b; color: white; border-radius: 8px; padding: 6px 12px; }\n"
+            + "button { background: #04a5e5; color: white; border-radius: 8px; padding: 6px 12px; }\n"
             + "entry { background: #FFFFFF; color: black; border-radius: 8px; padding: 6px; }\n"
             + "notebook tab { padding: 2px 4px; min-height: 20px; }\n"
-            + "notebook tab:checked { background: #e0e0e0; border-bottom: none; }\n"
+            + "notebook tab:checked { background: #e0e0e0; border-bottom: none; box-shadow: none; border-image: none; }\n"
             + ".close-btn { background: transparent; border: none; padding: 0; }\n"
             + ".format-bar { padding: 2px; min-height: 20px; }\n"
             + ".format-bar button { padding: 2px 4px; }\n";
@@ -875,6 +875,7 @@ fn open_graph_tab(
     });
 
     let graph_icon = Image::from_file(icons_dir.join("graph.svg"));
+    graph_icon.set_pixel_size(16);
     notebook.append_page(&container, Some(&graph_icon));
     notebook.set_tab_reorderable(&container, false);
     if let Some(page) = notebook.page_num(&container) {
