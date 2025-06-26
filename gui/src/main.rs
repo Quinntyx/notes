@@ -134,11 +134,12 @@ fn apply_material_css() {
             + "entry { background: #FFFFFF; color: black; border-radius: 8px; padding: 6px; }\n"
             + "notebook header { background: #f5f5f5; }\n"
             + "menubar { background: #f5f5f5; }\n"
-            + "notebook tab { padding: 2px 12px; min-height: 20px; border-radius: 12px; margin: 4px 2px; }\n"
-            + "notebook tab:hover { background: #ededed; }\n"
+            + "notebook tab { padding: 2px 12px; min-height: 20px; border-radius: 12px; margin: 6px 2px; border-bottom: none; box-shadow: none; border-image: none; }\n"
+            + "notebook tab:hover { background: #e5e5e5; border-bottom: none; }\n"
             + "notebook tab:checked { background: #e0e0e0; border-bottom: none; box-shadow: none; border-image: none; }\n"
             + ".close-btn { background: transparent; border: none; padding: 0; }\n"
-            + ".format-bar { padding: 2px 4px; min-height: 20px; }\n"
+            + ".tab-ext { background: #e0e0e0; color: #555555; font-size: 70%; padding: 1px 6px; border-radius: 8px; margin-left: 6px; margin-right: 6px; }\n"
+            + ".format-bar { padding: 2px 4px; min-height: 16px; }\n"
             + ".format-bar button { background: transparent; border-radius: 8px; padding: 1px 16px; margin-top: 2px; margin-bottom: 2px; border: none; box-shadow: none; }\n"
             + ".format-bar button:hover:enabled { background: #f2f2f2; }\n"
             + ".format-bar button:disabled { background: #e0e0e0; color: #555555; }\n";
@@ -328,12 +329,21 @@ fn open_any_path(
             |_| {},
         );
 
-        let label = Label::new(path.file_name().and_then(|s| s.to_str()));
+        let ext = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_ascii_uppercase();
+        let base = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+        let ext_label = Label::new(Some(&ext));
+        ext_label.add_css_class("tab-ext");
+        let label = Label::new(Some(base));
         let close_btn = Button::new();
         close_btn.add_css_class("close-btn");
         close_btn.set_child(Some(&Image::from_file(icons_dir.join("close.svg"))));
         close_btn.set_size_request(16, 16);
         let tab_box = Box::new(Orientation::Horizontal, 4);
+        tab_box.append(&ext_label);
         tab_box.append(&label);
         tab_box.append(&close_btn);
 
@@ -615,9 +625,9 @@ fn open_graph_tab(
             let (r, g, b) = st.colors.get(i).copied().unwrap_or((0.2, 0.6, 0.86));
             if node.is_directory() {
                 let fill = if st.hover == Some(i) {
-                    (0.7, 0.7, 0.7)
+                    (0.9, 0.9, 0.9)
                 } else {
-                    (0.5, 0.5, 0.5)
+                    (1.0, 1.0, 1.0)
                 };
                 ctx.arc(sx, sy, radius * scale.max(0.2), 0.0, 2.0 * PI);
                 ctx.set_source_rgb(fill.0, fill.1, fill.2);

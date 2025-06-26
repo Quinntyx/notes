@@ -19,6 +19,7 @@ Only put UI and event-handling logic here. Core algorithms should remain in the 
 - Follow Google Material Design colors and spacing. Use soft corner radius on buttons and default to the Material light theme with window background `#FAFAFA`.
 - Accent color `#04a5e5` should style primary buttons and tabs.
 - Tabs use pill-shaped buttons with generous horizontal padding and light gray headers so the menu bar and tab bar share the same `#f5f5f5` background.
+- Tab titles omit file extensions. A small gray bubble with the uppercase extension sits at the left of each tab label.
 - Format bar buttons have transparent backgrounds; the active or hovered format shows a gray highlight.
 - The "formats bar" refers to the row of buttons for each format a logical node has. The button for the format currently
   open in a tab should be disabled and tinted gray.
