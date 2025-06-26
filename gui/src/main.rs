@@ -166,7 +166,7 @@ fn apply_material_css() {
             + ".tab-ext { background: #f0f0f0; color: #555555; font-size: 70%; padding: 1px 3px; border-radius: 8px; margin: 1px 6px; }\n"
             + "notebook tab:checked .tab-ext { background: #cfcfcf; }\n"
             + "notebook tab:hover .tab-ext { background: #d0d0d0; }\n"
-            + ".graph-tab { padding: 0; margin: 0; min-width: 12px; min-height: 12px; }\n"
+            + "notebook tab.graph-tab { padding: 0; margin: 0; min-width: 16px; max-width: 16px; min-height: 16px; max-height: 16px; }\n"
             + ".graph-btn { padding: 4px 8px; }\n"
             + ".format-bar { padding: 2px 4px; min-height: 16px; }\n"
             + ".format-bar button { background: transparent; border-radius: 8px; padding: 1px 16px; margin-top: 2px; margin-bottom: 2px; border: none; box-shadow: none; }\n"
@@ -543,6 +543,11 @@ fn open_any_path(
         term_wrap
             .style_context()
             .add_provider(&provider, gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION);
+        container
+            .style_context()
+            .add_provider(&provider, gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION);
+        term_wrap.set_hexpand(true);
+        term_wrap.set_vexpand(true);
         term_wrap.append(&term);
         container.append(&term_wrap);
 
@@ -852,8 +857,8 @@ fn open_graph_tab(
             if st.hover == Some(i) || show_names {
                 let offset_x = radius * scale + 8.0;
                 let offset_y = -2.0 * scale;
-                let text_x = (sx + offset_x).round();
-                let text_y = (sy + offset_y).round();
+                let text_x = sx + offset_x;
+                let text_y = sy + offset_y;
                 draw_pango_text(
                     ctx,
                     &node.name,
@@ -877,8 +882,8 @@ fn open_graph_tab(
                 formats.dedup();
                 if !formats.is_empty() {
                     let fmt_text = formats.join(", ");
-                    let fx = (sx + offset_x).round();
-                    let fy = (sy + offset_y + 14.0).round();
+                    let fx = sx + offset_x;
+                    let fy = sy + offset_y + 14.0;
                     draw_pango_text(ctx, &fmt_text, fx, fy, 13, (0.3, 0.3, 0.3, label_alpha));
                 }
             }
@@ -1117,8 +1122,8 @@ fn open_graph_tab(
     });
 
     let graph_icon = Image::from_file(icons_dir.join("graph.svg"));
-    graph_icon.set_pixel_size(12);
-    graph_icon.set_size_request(12, 12);
+    graph_icon.set_pixel_size(16);
+    graph_icon.set_size_request(16, 16);
     let graph_box = Box::new(Orientation::Vertical, 0);
     graph_box.set_margin_start(4);
     graph_box.set_margin_end(4);
