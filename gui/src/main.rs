@@ -91,8 +91,7 @@ fn draw_pango_text(
     size: i32,
     rgba: (f64, f64, f64, f64),
 ) {
-    use pango::prelude::*;
-    use pango::{FontDescription, Layout};
+    use pango::{FontDescription, Layout, prelude::*};
     use pangocairo::functions as pc;
 
     let layout: Layout = pc::create_layout(ctx);
@@ -234,16 +233,16 @@ fn apply_material_css() {
             + "entry { background: #FFFFFF; color: black; border-radius: 8px; padding: 6px; }\n"
             + "notebook header { background: #f5f5f5; }\n"
             + "menubar { background: #f5f5f5; }\n"
-            + "notebook tab { padding: 2px 11px; min-height: 20px; border-radius: 12px; margin: 4px 1px; border-bottom: none; box-shadow: none; border-image: none; background: #f2f2f2; }\n"
-            + "notebook tab:hover { background: #ececec; border-bottom: none; }\n"
-            + "notebook tab:checked { background: #e0e0e0; border-bottom: none; box-shadow: none; border-image: none; }\n"
+            + "notebook tab { padding: 2px 11px; min-height: 20px; border-radius: 12px; margin: 4px 1px; border-bottom: none; box-shadow: none; border-image: none; background: #eaeaea; }\n"
+            + "notebook tab:hover { background: #e2e2e2; border-bottom: none; }\n"
+            + "notebook tab:checked { background: #d5d5d5; border-bottom: none; box-shadow: none; border-image: none; }\n"
             + ".close-btn { background: transparent; border: none; padding: 0; }\n"
             + ".tab-ext { background: #f0f0f0; color: #555555; font-size: 70%; padding: 1px 3px; border-radius: 8px; margin: 1px 6px; }\n"
             + "notebook tab:checked .tab-ext { background: #cfcfcf; }\n"
             + "notebook tab:hover .tab-ext { background: #d0d0d0; }\n"
             + "notebook tab.graph-tab { padding: 0; margin: 0; min-width: 16px; max-width: 16px; min-height: 16px; max-height: 16px; }\n"
             + ".graph-btn { padding: 4px 8px; }\n"
-            + ".format-bar { padding: 0 4px; min-height: 16px; }\n"
+            + ".format-bar { padding: 0 2px; min-height: 16px; }\n"
             + ".format-bar button { background: transparent; border-radius: 0; padding: 2px 6px; margin: 0 2px; border: none; box-shadow: none; }\n"
             + ".format-bar button:hover:enabled { background: #ececec; }\n"
             + ".format-bar button:disabled { background: #e0e0e0; color: #555555; }\n";
@@ -619,8 +618,6 @@ fn open_any_path(
         container.append(&term_wrap);
 
         let term_clone = term.clone();
-        let term_wrap_clone = term_wrap.clone();
-        let container_clone = container.clone();
         glib::timeout_add_local(std::time::Duration::from_millis(100), move || {
             let bg = sample_terminal_background(&term_clone);
             let text = if color_brightness(&bg) > 0.5 {
@@ -633,12 +630,13 @@ fn open_any_path(
                 bg.to_string(),
                 text
             ));
-            term_wrap_clone
-                .style_context()
-                .add_provider(&provider, gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION);
-            container_clone
-                .style_context()
-                .add_provider(&provider, gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION);
+            if let Some(display) = gdk::Display::default() {
+                gtk4::style_context_add_provider_for_display(
+                    &display,
+                    &provider,
+                    gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
+                );
+            }
             glib::ControlFlow::Break
         });
 

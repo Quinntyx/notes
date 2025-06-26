@@ -10,12 +10,14 @@ case "$1" in
         ;;
     rpull)
         i=0
+        printf "fetching git (0)" >&2
         while :; do
             i=$((i+1))
             out=$(git pull 2>&1)
             if echo "$out" | grep -q "Already up to date."; then
-                echo "fetching git ($i)"
+                printf "\rfetching git (%d)" "$i" >&2
             else
+                printf "\n" >&2
                 echo "$out"
                 break
             fi
@@ -23,7 +25,7 @@ case "$1" in
         ;;
     cbranch)
         git fetch
-        branch=$(git branch -r --sort=-committerdate | grep 'origin/codex/' | head -n1 | sed 's#origin/##')
+        branch=$(git branch -r --sort=-committerdate | grep 'origin/codex/' | head -n1 | sed 's#origin/##' | tr -d ' \t')
         if [ -n "$branch" ]; then
             git checkout "$branch"
         else
