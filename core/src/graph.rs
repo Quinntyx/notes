@@ -154,7 +154,12 @@ pub fn build_graph() -> Graph {
     if let Ok(entries) = fs::read_dir(vault_dir()) {
         for entry in entries.flatten() {
             let path = entry.path();
-            if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+            let name_os = if path.is_dir() {
+                path.file_name()
+            } else {
+                path.file_stem()
+            };
+            if let Some(stem) = name_os.and_then(|s| s.to_str()) {
                 let canon = canonicalize(stem);
                 let idx = if let Some(idx) = index_map.get(&canon).copied() {
                     idx
@@ -264,7 +269,12 @@ pub fn load_graph_data() -> GraphData {
     if let Ok(entries) = fs::read_dir(vault_dir()) {
         for entry in entries.flatten() {
             let path = entry.path();
-            if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+            let name_os = if path.is_dir() {
+                path.file_name()
+            } else {
+                path.file_stem()
+            };
+            if let Some(stem) = name_os.and_then(|s| s.to_str()) {
                 let canon = canonicalize(stem);
                 let idx = if let Some(idx) = index_map.get(&canon).copied() {
                     idx
@@ -314,7 +324,13 @@ pub fn load_graph_data() -> GraphData {
 
 pub fn update_open_notes(data: &mut GraphData, open_notes: &[String]) {
     for name in open_notes {
-        if let Some(stem) = PathBuf::from(name).file_stem().and_then(|s| s.to_str()) {
+        let path = PathBuf::from(name);
+        let name_os = if path.is_dir() {
+            path.file_name()
+        } else {
+            path.file_stem()
+        };
+        if let Some(stem) = name_os.and_then(|s| s.to_str()) {
             let canon = canonicalize(stem);
             if let Some(idx) = data.canonical.iter().position(|c| c == &canon) {
                 let mut text = String::new();

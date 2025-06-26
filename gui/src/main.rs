@@ -393,7 +393,8 @@ fn open_any_path(
     path: &Path,
     icons_dir: PathBuf,
 ) {
-    let key = path.to_string_lossy().to_string();
+    let key_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    let key = key_path.to_string_lossy().to_string();
     if is_text_file(path) {
         if let Some(widget) = open_tabs.borrow().get(&key).cloned() {
             if let Some(page) = notebook.page_num(&widget) {
@@ -417,12 +418,44 @@ fn open_any_path(
             |_| {},
         );
 
-        let ext = path
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("")
-            .to_ascii_uppercase();
-        let base = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+        if let Some(app) = gio::Application::default() {
+            let ctrl = gtk4::EventControllerKey::builder()
+                .propagation_phase(gtk4::PropagationPhase::Capture)
+                .build();
+            ctrl.connect_key_pressed(move |_, k, _code, state| {
+                let modifier = if cfg!(target_os = "macos") {
+                    gdk::ModifierType::META_MASK
+                } else {
+                    gdk::ModifierType::CONTROL_MASK
+                };
+                if state.contains(modifier) {
+                    match k {
+                        gdk::Key::n => app.activate_action("new_note", None),
+                        gdk::Key::w => app.activate_action("close_tab", None),
+                        gdk::Key::o => app.activate_action("open_vault", None),
+                        gdk::Key::g => app.activate_action("focus_graph", None),
+                        _ => return glib::Propagation::Proceed,
+                    }
+                    return glib::Propagation::Stop;
+                }
+                glib::Propagation::Proceed
+            });
+            term.add_controller(ctrl);
+        }
+
+        let ext = if path.is_dir() {
+            String::new()
+        } else {
+            path.extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("")
+                .to_ascii_uppercase()
+        };
+        let base = if path.is_dir() {
+            path.file_name().and_then(|s| s.to_str()).unwrap_or("")
+        } else {
+            path.file_stem().and_then(|s| s.to_str()).unwrap_or("")
+        };
         let ext_label = Label::new(Some(&ext));
         ext_label.add_css_class("tab-ext");
         let ext_wrap = Box::new(Orientation::Vertical, 0);
@@ -435,7 +468,11 @@ fn open_any_path(
         close_btn.set_child(Some(&Image::from_file(icons_dir.join("close.svg"))));
         close_btn.set_size_request(16, 16);
         let tab_box = Box::new(Orientation::Horizontal, 4);
+        tab_box.set_valign(gtk4::Align::Center);
         close_btn.set_margin_start(8);
+        ext_wrap.set_valign(gtk4::Align::Center);
+        label.set_valign(gtk4::Align::Center);
+        close_btn.set_valign(gtk4::Align::Center);
         tab_box.append(&ext_wrap);
         tab_box.append(&label);
         tab_box.append(&close_btn);
@@ -477,14 +514,16 @@ fn open_any_path(
         }
 
         let container = Box::new(Orientation::Vertical, 0);
+        container.append(&format_bar);
+        let term_wrap = Box::new(Orientation::Vertical, 0);
         let bg = term.color_background_for_draw();
         let provider = gtk4::CssProvider::new();
         provider.load_from_data(&format!("*{{background:{}}}", bg.to_string()));
-        container
+        term_wrap
             .style_context()
             .add_provider(&provider, gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION);
-        container.append(&format_bar);
-        container.append(&term);
+        term_wrap.append(&term);
+        container.append(&term_wrap);
 
         notebook.append_page(&container, Some(&tab_box));
         notebook.set_tab_reorderable(&container, true);
@@ -1051,6 +1090,8 @@ fn open_graph_tab(
     let graph_icon = Image::from_file(icons_dir.join("graph.svg"));
     graph_icon.set_pixel_size(12);
     graph_icon.set_size_request(12, 12);
+    graph_icon.set_margin_start(4);
+    graph_icon.set_margin_end(4);
     graph_icon.add_css_class("graph-tab");
     notebook.append_page(&container, Some(&graph_icon));
     notebook.set_tab_reorderable(&container, false);
