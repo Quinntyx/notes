@@ -99,8 +99,15 @@ fn draw_pango_text(
     layout.set_text(text);
     let desc = FontDescription::from_string(&format!("Rubik {}", size));
     layout.set_font_description(Some(&desc));
+    let mut opts = cairo::FontOptions::new().expect("font options");
+    opts.set_hint_style(cairo::HintStyle::None);
+    opts.set_hint_metrics(cairo::HintMetrics::Off);
+    ctx.set_font_options(&opts);
+    let (_ink, logical) = layout.pixel_extents();
+    let nx = x - logical.x() as f64;
+    let ny = y - logical.y() as f64 - logical.height() as f64 / 2.0;
     ctx.set_source_rgba(rgba.0, rgba.1, rgba.2, rgba.3);
-    ctx.move_to(x, y);
+    ctx.move_to(nx, ny);
     pc::show_layout(ctx, &layout);
 }
 
@@ -204,6 +211,13 @@ fn sample_terminal_background(term: &Terminal) -> gdk::RGBA {
     }
 }
 
+fn color_brightness(c: &gdk::RGBA) -> f64 {
+    let r = c.red() as f64;
+    let g = c.green() as f64;
+    let b = c.blue() as f64;
+    r.max(g).max(b)
+}
+
 fn apply_material_css() {
     if let Some(display) = gdk::Display::default() {
         let provider = gtk4::CssProvider::new();
@@ -220,8 +234,8 @@ fn apply_material_css() {
             + "entry { background: #FFFFFF; color: black; border-radius: 8px; padding: 6px; }\n"
             + "notebook header { background: #f5f5f5; }\n"
             + "menubar { background: #f5f5f5; }\n"
-            + "notebook tab { padding: 2px 11px; min-height: 20px; border-radius: 12px; margin: 6px 2px; border-bottom: none; box-shadow: none; border-image: none; }\n"
-            + "notebook tab:hover { background: #e5e5e5; border-bottom: none; }\n"
+            + "notebook tab { padding: 2px 11px; min-height: 20px; border-radius: 12px; margin: 4px 1px; border-bottom: none; box-shadow: none; border-image: none; background: #f2f2f2; }\n"
+            + "notebook tab:hover { background: #ececec; border-bottom: none; }\n"
             + "notebook tab:checked { background: #e0e0e0; border-bottom: none; box-shadow: none; border-image: none; }\n"
             + ".close-btn { background: transparent; border: none; padding: 0; }\n"
             + ".tab-ext { background: #f0f0f0; color: #555555; font-size: 70%; padding: 1px 3px; border-radius: 8px; margin: 1px 6px; }\n"
@@ -229,9 +243,9 @@ fn apply_material_css() {
             + "notebook tab:hover .tab-ext { background: #d0d0d0; }\n"
             + "notebook tab.graph-tab { padding: 0; margin: 0; min-width: 16px; max-width: 16px; min-height: 16px; max-height: 16px; }\n"
             + ".graph-btn { padding: 4px 8px; }\n"
-            + ".format-bar { padding: 2px 4px; min-height: 16px; }\n"
-            + ".format-bar button { background: transparent; border-radius: 8px; padding: 1px 16px; margin-top: 2px; margin-bottom: 2px; border: none; box-shadow: none; }\n"
-            + ".format-bar button:hover:enabled { background: #f2f2f2; }\n"
+            + ".format-bar { padding: 0 4px; min-height: 16px; }\n"
+            + ".format-bar button { background: transparent; border-radius: 0; padding: 2px 6px; margin: 0 2px; border: none; box-shadow: none; }\n"
+            + ".format-bar button:hover:enabled { background: #ececec; }\n"
             + ".format-bar button:disabled { background: #e0e0e0; color: #555555; }\n";
         provider.load_from_data(&css);
         gtk4::style_context_add_provider_for_display(
@@ -609,7 +623,16 @@ fn open_any_path(
         let container_clone = container.clone();
         glib::timeout_add_local(std::time::Duration::from_millis(100), move || {
             let bg = sample_terminal_background(&term_clone);
-            provider.load_from_data(&format!("*{{background:{}}}", bg.to_string()));
+            let text = if color_brightness(&bg) > 0.5 {
+                "#000"
+            } else {
+                "#fff"
+            };
+            provider.load_from_data(&format!(
+                "*{{background-color:{}}}\n.format-bar button{{color:{}}}\n",
+                bg.to_string(),
+                text
+            ));
             term_wrap_clone
                 .style_context()
                 .add_provider(&provider, gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION);
@@ -951,7 +974,7 @@ fn open_graph_tab(
                 if !formats.is_empty() {
                     let fmt_text = formats.join(", ");
                     let fx = sx + offset_x;
-                    let fy = sy + offset_y + 14.0;
+                    let fy = sy + offset_y + 16.0;
                     draw_pango_text(ctx, &fmt_text, fx, fy, 13, (0.3, 0.3, 0.3, label_alpha));
                 }
             }
