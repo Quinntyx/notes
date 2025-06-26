@@ -72,6 +72,27 @@ fn node_has_dir(node: &notes_core::graph::Node) -> bool {
     node.paths.iter().any(|p| p.is_dir())
 }
 
+fn draw_pango_text(
+    ctx: &cairo::Context,
+    text: &str,
+    x: f64,
+    y: f64,
+    size: i32,
+    rgba: (f64, f64, f64, f64),
+) {
+    use pango::prelude::*;
+    use pango::{FontDescription, Layout};
+    use pangocairo::functions as pc;
+
+    let layout: Layout = pc::create_layout(ctx);
+    layout.set_text(text);
+    let desc = FontDescription::from_string(&format!("Rubik {}", size));
+    layout.set_font_description(Some(&desc));
+    ctx.set_source_rgba(rgba.0, rgba.1, rgba.2, rgba.3);
+    ctx.move_to(x, y);
+    pc::show_layout(ctx, &layout);
+}
+
 fn ensure_rubik_font() {
     const RUBIK_URL: &str =
         "https://fonts.gstatic.com/s/rubik/v30/iJWZBXyIfDnIV5PNhY1KTN7Z-Yh-B4i1UA.ttf";
@@ -142,10 +163,10 @@ fn apply_material_css() {
             + "notebook tab:hover { background: #e5e5e5; border-bottom: none; }\n"
             + "notebook tab:checked { background: #e0e0e0; border-bottom: none; box-shadow: none; border-image: none; }\n"
             + ".close-btn { background: transparent; border: none; padding: 0; }\n"
-            + ".tab-ext { background: #f0f0f0; color: #555555; font-size: 70%; padding: 0 3px; border-radius: 8px; margin: 1px 6px; }\n"
+            + ".tab-ext { background: #f0f0f0; color: #555555; font-size: 70%; padding: 1px 3px; border-radius: 8px; margin: 1px 6px; }\n"
             + "notebook tab:checked .tab-ext { background: #cfcfcf; }\n"
             + "notebook tab:hover .tab-ext { background: #d0d0d0; }\n"
-            + ".graph-tab { padding: 0; margin: 0; }\n"
+            + ".graph-tab { padding: 0; margin: 0; min-width: 12px; min-height: 12px; }\n"
             + ".graph-btn { padding: 4px 8px; }\n"
             + ".format-bar { padding: 2px 4px; min-height: 16px; }\n"
             + ".format-bar button { background: transparent; border-radius: 8px; padding: 1px 16px; margin-top: 2px; margin-bottom: 2px; border: none; box-shadow: none; }\n"
@@ -831,12 +852,20 @@ fn open_graph_tab(
             if st.hover == Some(i) || show_names {
                 let offset_x = radius * scale + 8.0;
                 let offset_y = -2.0 * scale;
-                ctx.move_to(sx + offset_x, sy + offset_y);
-                ctx.set_source_rgba(0.0, 0.0, 0.0, label_alpha);
-                let _ = ctx.show_text(&node.name);
+                let text_x = (sx + offset_x).round();
+                let text_y = (sy + offset_y).round();
+                draw_pango_text(
+                    ctx,
+                    &node.name,
+                    text_x,
+                    text_y,
+                    13,
+                    (0.0, 0.0, 0.0, label_alpha),
+                );
                 let formats: Vec<String> = node
                     .paths
                     .iter()
+                    .filter(|p| !p.is_dir())
                     .filter_map(|p| {
                         p.extension()
                             .and_then(|e| e.to_str())
@@ -848,9 +877,9 @@ fn open_graph_tab(
                 formats.dedup();
                 if !formats.is_empty() {
                     let fmt_text = formats.join(", ");
-                    ctx.move_to(sx + offset_x, sy + offset_y + 14.0);
-                    ctx.set_source_rgba(0.3, 0.3, 0.3, label_alpha);
-                    let _ = ctx.show_text(&fmt_text);
+                    let fx = (sx + offset_x).round();
+                    let fy = (sy + offset_y + 14.0).round();
+                    draw_pango_text(ctx, &fmt_text, fx, fy, 13, (0.3, 0.3, 0.3, label_alpha));
                 }
             }
             ctx.new_path();
@@ -1090,10 +1119,12 @@ fn open_graph_tab(
     let graph_icon = Image::from_file(icons_dir.join("graph.svg"));
     graph_icon.set_pixel_size(12);
     graph_icon.set_size_request(12, 12);
-    graph_icon.set_margin_start(4);
-    graph_icon.set_margin_end(4);
-    graph_icon.add_css_class("graph-tab");
-    notebook.append_page(&container, Some(&graph_icon));
+    let graph_box = Box::new(Orientation::Vertical, 0);
+    graph_box.set_margin_start(4);
+    graph_box.set_margin_end(4);
+    graph_box.add_css_class("graph-tab");
+    graph_box.append(&graph_icon);
+    notebook.append_page(&container, Some(&graph_box));
     notebook.set_tab_reorderable(&container, false);
     if let Some(page) = notebook.page_num(&container) {
         notebook.set_current_page(Some(page));

@@ -13,3 +13,5 @@ open = "5"
 twox-hash = "1"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
 directories = "6"
+pango = "0.20"
+pangocairo = "0.20"

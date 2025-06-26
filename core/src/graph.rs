@@ -351,7 +351,10 @@ pub fn update_open_notes(data: &mut GraphData, open_notes: &[String]) {
 
 #[cfg(test)]
 mod tests {
+    use super::Node;
     use super::{canonicalize, find_unique_links, normalize};
+    use std::fs;
+    use tempfile::tempdir;
 
     #[test]
     fn longest_match() {
@@ -389,5 +392,25 @@ mod tests {
         let mut links = find_unique_links(&text, &canonical, &normalized);
         links.sort();
         assert_eq!(links, vec![1]);
+    }
+
+    #[test]
+    fn canonicalize_dots_and_hyphens() {
+        assert_eq!(canonicalize("foo.bar"), "foobar");
+        assert_eq!(canonicalize("foo-bar"), "foobar");
+    }
+
+    #[test]
+    fn directory_primary_format_none() {
+        let tmp = tempdir().unwrap();
+        let dir_path = tmp.path().join("testing.d");
+        fs::create_dir(&dir_path).unwrap();
+        let node = Node {
+            name: "testing.d".into(),
+            paths: vec![dir_path],
+            links: 0,
+        };
+        assert!(node.is_directory());
+        assert_eq!(node.primary_file_format(), None);
     }
 }
