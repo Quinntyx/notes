@@ -17,3 +17,5 @@ Only put UI and event-handling logic here. Core algorithms should remain in the 
 - Node format indicators are rendered in ALL CAPS across the interface.
 - All UI fonts use the Google Rubik family. Do **not** commit font binaries; the application downloads the files at runtime if missing.
 - Follow Google Material Design colors and spacing. Use soft corner radius on buttons and default window background `#FAFAFA`.
+- Accent color `#6200EE` should style primary buttons.
+- Avoid committing any binary resources such as fonts or images. Fetch them on startup if needed.

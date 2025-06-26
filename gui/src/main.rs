@@ -94,8 +94,15 @@ pub fn run_gui() {
 
     if let Some(display) = gdk::Display::default() {
         let provider = gtk4::CssProvider::new();
-        let css = "* { font-family: 'Rubik'; }\nwindow { background: #FAFAFA; }\nbutton { border-radius: 4px; padding: 6px 12px; }\n";
-        provider.load_from_data(css);
+        let font_dir = ProjectDirs::from("com", "example", "notes")
+            .map(|p| p.data_dir().join("fonts"))
+            .expect("failed to resolve data dir");
+        let font_path = font_dir.join("Rubik-Regular.ttf");
+        let css = format!(
+            "@font-face {{ font-family: 'Rubik'; src: url('file://{}'); }}\n* {{ font-family: 'Rubik', sans-serif; font-size: 14px; }}\nwindow {{ background: #FAFAFA; }}\nbutton {{ background: #6200EE; color: white; border-radius: 4px; padding: 6px 12px; }}\nentry {{ border-radius: 4px; padding: 6px; }}\n",
+            font_path.display()
+        );
+        provider.load_from_data(&css);
         gtk4::style_context_add_provider_for_display(
             &display,
             &provider,
