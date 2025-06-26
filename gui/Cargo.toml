@@ -7,7 +7,7 @@ default-run = "notes-gui"
 [dependencies]
 notes-core = { path = "../core" }
 gtk4 = "0.9"
-vte4 = "0.8"
+vte4 = { version = "0.8", features = ["v0_72"] }
 cairo-rs = "0.20"
 open = "5"
 twox-hash = "1"

@@ -72,6 +72,17 @@ fn node_has_dir(node: &notes_core::graph::Node) -> bool {
     node.paths.iter().any(|p| p.is_dir())
 }
 
+fn segments_intersect(a1: (f64, f64), a2: (f64, f64), b1: (f64, f64), b2: (f64, f64)) -> bool {
+    fn orient(p: (f64, f64), q: (f64, f64), r: (f64, f64)) -> f64 {
+        (q.0 - p.0) * (r.1 - p.1) - (q.1 - p.1) * (r.0 - p.0)
+    }
+    let o1 = orient(a1, a2, b1);
+    let o2 = orient(a1, a2, b2);
+    let o3 = orient(b1, b2, a1);
+    let o4 = orient(b1, b2, a2);
+    o1 * o2 < 0.0 && o3 * o4 < 0.0
+}
+
 fn draw_pango_text(
     ctx: &cairo::Context,
     text: &str,
@@ -141,6 +152,56 @@ fn ensure_icons() -> PathBuf {
         }
     }
     dir
+}
+
+fn extract_bg_color(html: &str) -> Option<gdk::RGBA> {
+    if let Some(idx) = html.find("background-color:") {
+        let rest = &html[idx + "background-color:".len()..];
+        if let Some(hash) = rest.find('#') {
+            let slice = &rest[hash..hash + 7.min(rest.len() - hash)];
+            if let Ok(rgba) = gdk::RGBA::parse(slice) {
+                return Some(rgba);
+            }
+        }
+    }
+    if let Some(idx) = html.find("bgcolor=") {
+        let rest = &html[idx + 8..];
+        if let Some(end) = rest.find('"') {
+            let slice = &rest[..end];
+            if let Ok(rgba) = gdk::RGBA::parse(slice) {
+                return Some(rgba);
+            }
+        }
+    }
+    None
+}
+
+fn sample_terminal_background(term: &Terminal) -> gdk::RGBA {
+    let rows = term.row_count().max(1) as i64;
+    let cols = term.column_count().max(1) as i64;
+    let coords = [(0, 0), (0, cols - 1), (rows - 1, 0), (rows - 1, cols - 1)];
+    let mut sum = (0.0, 0.0, 0.0);
+    let mut count = 0.0;
+    for &(r, c) in &coords {
+        if let (Some(html), _) = term.text_range_format(vte4::Format::Html, r, c, r, c + 1) {
+            if let Some(col) = extract_bg_color(&html) {
+                sum.0 += col.red() as f64;
+                sum.1 += col.green() as f64;
+                sum.2 += col.blue() as f64;
+                count += 1.0;
+            }
+        }
+    }
+    if count == 0.0 {
+        term.color_background_for_draw()
+    } else {
+        gdk::RGBA::new(
+            (sum.0 / count) as f32,
+            (sum.1 / count) as f32,
+            (sum.2 / count) as f32,
+            1.0,
+        )
+    }
 }
 
 fn apply_material_css() {
@@ -537,19 +598,26 @@ fn open_any_path(
         let container = Box::new(Orientation::Vertical, 0);
         container.append(&format_bar);
         let term_wrap = Box::new(Orientation::Vertical, 0);
-        let bg = term.color_background_for_draw();
         let provider = gtk4::CssProvider::new();
-        provider.load_from_data(&format!("*{{background:{}}}", bg.to_string()));
-        term_wrap
-            .style_context()
-            .add_provider(&provider, gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION);
-        container
-            .style_context()
-            .add_provider(&provider, gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION);
         term_wrap.set_hexpand(true);
         term_wrap.set_vexpand(true);
         term_wrap.append(&term);
         container.append(&term_wrap);
+
+        let term_clone = term.clone();
+        let term_wrap_clone = term_wrap.clone();
+        let container_clone = container.clone();
+        glib::timeout_add_local(std::time::Duration::from_millis(100), move || {
+            let bg = sample_terminal_background(&term_clone);
+            provider.load_from_data(&format!("*{{background:{}}}", bg.to_string()));
+            term_wrap_clone
+                .style_context()
+                .add_provider(&provider, gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION);
+            container_clone
+                .style_context()
+                .add_provider(&provider, gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION);
+            glib::ControlFlow::Break
+        });
 
         notebook.append_page(&container, Some(&tab_box));
         notebook.set_tab_reorderable(&container, true);
@@ -1068,7 +1136,7 @@ fn open_graph_tab(
                     let dy = st.positions[i].1 - st.positions[j].1;
                     let dist2 = dx * dx + dy * dy + 0.01;
                     let dist = dist2.sqrt();
-                    let rep = 2000.0 / dist2;
+                    let rep = 1200.0 / dist2;
                     let fx = dx / dist * rep;
                     let fy = dy / dist * rep;
                     forces[i].0 += fx;
@@ -1088,6 +1156,34 @@ fn open_graph_tab(
                 forces[a].1 -= fy;
                 forces[b].0 += fx;
                 forces[b].1 += fy;
+            }
+            // Edge intersection repulsion
+            let edge_count = st.data.graph.edges.len();
+            for i in 0..edge_count {
+                let (a1, b1) = st.data.graph.edges[i];
+                let p1 = st.positions[a1];
+                let p2 = st.positions[b1];
+                for j in (i + 1)..edge_count {
+                    let (a2, b2) = st.data.graph.edges[j];
+                    if a1 == a2 || a1 == b2 || b1 == a2 || b1 == b2 {
+                        continue;
+                    }
+                    let p3 = st.positions[a2];
+                    let p4 = st.positions[b2];
+                    if segments_intersect(p1, p2, p3, p4) {
+                        let perp = (p2.1 - p1.1, p1.0 - p2.0);
+                        let len = (perp.0 * perp.0 + perp.1 * perp.1).sqrt().max(1.0);
+                        let push = 0.05 / len;
+                        forces[a1].0 += perp.0 * push;
+                        forces[a1].1 += perp.1 * push;
+                        forces[b1].0 += perp.0 * push;
+                        forces[b1].1 += perp.1 * push;
+                        forces[a2].0 -= perp.0 * push;
+                        forces[a2].1 -= perp.1 * push;
+                        forces[b2].0 -= perp.0 * push;
+                        forces[b2].1 -= perp.1 * push;
+                    }
+                }
             }
             for i in 0..n {
                 st.velocities[i].0 = (st.velocities[i].0 + forces[i].0) * 0.85;
@@ -1124,9 +1220,12 @@ fn open_graph_tab(
     let graph_icon = Image::from_file(icons_dir.join("graph.svg"));
     graph_icon.set_pixel_size(16);
     graph_icon.set_size_request(16, 16);
-    let graph_box = Box::new(Orientation::Vertical, 0);
-    graph_box.set_margin_start(4);
-    graph_box.set_margin_end(4);
+    graph_icon.set_valign(gtk4::Align::Center);
+    let graph_box = Box::new(Orientation::Horizontal, 0);
+    graph_box.set_margin_start(1);
+    graph_box.set_margin_end(1);
+    graph_box.set_halign(gtk4::Align::Center);
+    graph_box.set_valign(gtk4::Align::Center);
     graph_box.add_css_class("graph-tab");
     graph_box.append(&graph_icon);
     notebook.append_page(&container, Some(&graph_box));
