@@ -138,8 +138,9 @@ fn apply_material_css() {
             + "notebook tab:hover { background: #e5e5e5; border-bottom: none; }\n"
             + "notebook tab:checked { background: #e0e0e0; border-bottom: none; box-shadow: none; border-image: none; }\n"
             + ".close-btn { background: transparent; border: none; padding: 0; }\n"
-            + ".tab-ext { background: #f0f0f0; color: #555555; font-size: 40%; padding: 0 4px; border-radius: 8px; margin-left: 6px; margin-right: 6px; }\n"
+            + ".tab-ext { background: #f0f0f0; color: #555555; font-size: 70%; padding: 0 4px; border-radius: 8px; margin: 1px 6px; }\n"
             + "notebook tab:checked .tab-ext { background: #cfcfcf; }\n"
+            + "notebook tab:hover .tab-ext { background: #d0d0d0; }\n"
             + ".graph-btn { padding: 4px 8px; }\n"
             + ".format-bar { padding: 2px 4px; min-height: 16px; }\n"
             + ".format-bar button { background: transparent; border-radius: 8px; padding: 1px 16px; margin-top: 2px; margin-bottom: 2px; border: none; box-shadow: none; }\n"
@@ -157,6 +158,27 @@ fn apply_material_css() {
     }
 }
 
+fn maybe_open_default_vault(app: &Application, icons_dir: PathBuf) -> bool {
+    if let Ok(cwd) = std::env::current_dir() {
+        if let Some(name) = cwd.file_name().and_then(|s| s.to_str()) {
+            if name == "notes" || name == "vault" {
+                set_vault_dir(cwd);
+                open_main_window(app, icons_dir);
+                return true;
+            }
+        }
+        for candidate in ["notes", "vault"] {
+            let path = cwd.join(candidate);
+            if path.is_dir() {
+                set_vault_dir(path.clone());
+                open_main_window(app, icons_dir);
+                return true;
+            }
+        }
+    }
+    false
+}
+
 pub fn run_gui() {
     ensure_rubik_font();
     let icons_dir = ensure_icons();
@@ -169,7 +191,9 @@ pub fn run_gui() {
     });
 
     app.connect_activate(move |app| {
-        show_dashboard(app, icons_dir.clone());
+        if !maybe_open_default_vault(app, icons_dir.clone()) {
+            show_dashboard(app, icons_dir.clone());
+        }
     });
 
     // Pass an empty argument list to avoid `g_application_open` from
@@ -180,6 +204,9 @@ pub fn run_gui() {
 }
 
 fn show_dashboard(app: &Application, icons_dir: PathBuf) {
+    if maybe_open_default_vault(app, icons_dir.clone()) {
+        return;
+    }
     let window = ApplicationWindow::builder()
         .application(app)
         .title("Select Vault")
@@ -200,8 +227,8 @@ fn show_dashboard(app: &Application, icons_dir: PathBuf) {
     vbox.append(&button);
     window.set_child(Some(&vbox));
 
-    button.connect_clicked(
-        glib::clone!(@weak window, @weak app, @weak entry, @strong icons_dir => move |_| {
+    let open_selected = Rc::new(
+        glib::clone!(@weak window, @weak app, @weak entry, @strong icons_dir => move || {
             let path_str = entry.text();
             if !path_str.is_empty() {
                 let dir = expand_tilde(path_str.as_str());
@@ -211,6 +238,13 @@ fn show_dashboard(app: &Application, icons_dir: PathBuf) {
             }
         }),
     );
+    let open_btn = open_selected.clone();
+    button.connect_clicked(move |_| {
+        open_btn();
+    });
+    entry.connect_activate(move |_| {
+        open_selected();
+    });
     window.show();
 }
 
@@ -229,12 +263,28 @@ fn open_main_window(app: &Application, icons_dir: PathBuf) {
     let file_menu = gio::Menu::new();
     file_menu.append(Some("New Note"), Some("app.new_note"));
     file_menu.append(Some("Close Tab"), Some("app.close_tab"));
+    file_menu.append(Some("Open Vault"), Some("app.open_vault"));
     file_menu.append(Some("Quit"), Some("app.quit"));
     menu.append_submenu(Some("File"), &file_menu);
+
+    let use_global_menu = if cfg!(target_os = "macos") {
+        true
+    } else {
+        std::env::var("XDG_CURRENT_DESKTOP")
+            .map(|v| v.contains("KDE"))
+            .unwrap_or(false)
+    };
+
+    if use_global_menu {
+        app.set_menubar(Some(&menu));
+    }
+
     let menu_bar = gtk4::PopoverMenuBar::from_model(Some(&menu));
 
     let vbox = Box::new(Orientation::Vertical, 0);
-    vbox.append(&menu_bar);
+    if !use_global_menu {
+        vbox.append(&menu_bar);
+    }
     vbox.append(&notebook);
 
     let window = ApplicationWindow::builder()
@@ -261,6 +311,14 @@ fn open_main_window(app: &Application, icons_dir: PathBuf) {
                 }),
             )
             .build(),
+        gio::ActionEntry::builder("open_vault")
+            .activate(
+                glib::clone!(@weak window, @weak app_clone, @strong icons_dir => move |_,_,_| {
+                    window.close();
+                    show_dashboard(&app_clone, icons_dir.clone());
+                }),
+            )
+            .build(),
         gio::ActionEntry::builder("quit")
             .activate(move |app: &Application, _, _| {
                 app.quit();
@@ -270,6 +328,7 @@ fn open_main_window(app: &Application, icons_dir: PathBuf) {
 
     app.set_accels_for_action("app.new_note", &["<Primary>n"]);
     app.set_accels_for_action("app.close_tab", &["<Primary>w"]);
+    app.set_accels_for_action("app.open_vault", &["<Primary>o"]);
     if cfg!(target_os = "macos") {
         app.set_accels_for_action("app.quit", &["<Primary>q"]);
     }
@@ -285,6 +344,9 @@ fn open_main_window(app: &Application, icons_dir: PathBuf) {
                     return glib::Propagation::Stop;
                 } else if key == gdk::Key::w {
                     app_clone.activate_action("close_tab", None);
+                    return glib::Propagation::Stop;
+                } else if key == gdk::Key::o {
+                    app_clone.activate_action("open_vault", None);
                     return glib::Propagation::Stop;
                 } else if cfg!(target_os = "macos") && key == gdk::Key::q {
                     app_clone.activate_action("quit", None);
@@ -615,7 +677,6 @@ fn open_graph_tab(
             edge_width = 2.0;
         }
         ctx.set_line_width(edge_width);
-        ctx.set_source_rgb(0.6, 0.6, 0.6);
         for &(from, to) in &graph.edges {
             let (sx, sy) = positions[from];
             let (tx, ty) = positions[to];
@@ -623,8 +684,29 @@ fn open_graph_tab(
             let sy = sy * scale + pan_y;
             let tx = tx * scale + pan_x;
             let ty = ty * scale + pan_y;
+            let (r1, g1, b1) = st.colors.get(from).copied().unwrap_or((0.6, 0.6, 0.6));
+            let (r2, g2, b2) = st.colors.get(to).copied().unwrap_or((0.6, 0.6, 0.6));
+            if (r1, g1, b1) == (r2, g2, b2) {
+                ctx.set_source_rgb(r1, g1, b1);
+            } else {
+                let grad = cairo::LinearGradient::new(sx, sy, tx, ty);
+                grad.add_color_stop_rgb(0.0, r1, g1, b1);
+                grad.add_color_stop_rgb(1.0, r2, g2, b2);
+                ctx.set_source(&grad);
+            }
             ctx.move_to(sx, sy);
             ctx.line_to(tx, ty);
+            let _ = ctx.stroke();
+
+            // arrow head
+            let arrow_len = 6.0 * scale.max(0.5);
+            let angle = (ty - sy).atan2(tx - sx);
+            for offset in [-0.3, 0.3] {
+                let ax = tx - arrow_len * (angle + offset).cos();
+                let ay = ty - arrow_len * (angle + offset).sin();
+                ctx.move_to(tx, ty);
+                ctx.line_to(ax, ay);
+            }
             let _ = ctx.stroke();
         }
 
@@ -717,10 +799,25 @@ fn open_graph_tab(
     let zoom_state = state.clone();
     let zoom_area = area.clone();
     let scroll = gtk4::EventControllerScroll::new(gtk4::EventControllerScrollFlags::VERTICAL);
-    scroll.connect_scroll(move |_, _dx, dy| {
+    scroll.connect_scroll(move |controller, _dx, dy| {
         let mut st = zoom_state.borrow_mut();
         let factor = (1.0 - dy as f64 * 0.05).max(0.1);
+        let old_scale = st.scale;
         st.scale *= factor;
+        if let Some(event) = controller.current_event() {
+            if let Some((mx, my)) = event.position() {
+                let width = zoom_area.width() as f64;
+                let height = zoom_area.height() as f64;
+                let pan_x = st.pan_x + width / 2.0;
+                let pan_y = st.pan_y + height / 2.0;
+                let gx = (mx - pan_x) / old_scale;
+                let gy = (my - pan_y) / old_scale;
+                let new_pan_x = mx - gx * st.scale;
+                let new_pan_y = my - gy * st.scale;
+                st.pan_x = new_pan_x - width / 2.0;
+                st.pan_y = new_pan_y - height / 2.0;
+            }
+        }
         zoom_area.queue_draw();
         glib::Propagation::Stop
     });
@@ -907,8 +1004,8 @@ fn open_graph_tab(
     });
 
     let graph_icon = Image::from_file(icons_dir.join("graph.svg"));
-    graph_icon.set_pixel_size(16);
-    graph_icon.set_size_request(16, 16);
+    graph_icon.set_pixel_size(12);
+    graph_icon.set_size_request(12, 12);
     notebook.append_page(&container, Some(&graph_icon));
     notebook.set_tab_reorderable(&container, false);
     if let Some(page) = notebook.page_num(&container) {

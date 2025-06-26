@@ -26,3 +26,4 @@ Only put UI and event-handling logic here. Core algorithms should remain in the 
 - Material Symbols icons are stored as SVGs under `icons/` and loaded at runtime. Avoid adding binary assets like `.ttf` to the repo; fonts and icons are downloaded on startup.
 - The application logs when the Rubik font is fetched so you can confirm it was downloaded.
 - Register the CSS provider in the application's `startup` signal so it overrides any system theme.
+- The alt menu integrates with the OS global menubar on macOS and KDE when available.
