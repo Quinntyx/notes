@@ -13,7 +13,7 @@ case "$1" in
         printf "fetching git (0)" >&2
         while :; do
             i=$((i+1))
-            out=$(git pull 2>&1)
+            out=$(git -c color.ui=always pull 2>&1)
             if echo "$out" | grep -q "Already up to date."; then
                 printf "\rfetching git (%d)" "$i" >&2
             else

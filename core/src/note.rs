@@ -37,7 +37,7 @@ impl Note {
         Note {
             title,
             content,
-            aliases: aliases.unwrap_or_else(Vec::new),
+            aliases: aliases.unwrap_or_default(),
             path,
         }
     }

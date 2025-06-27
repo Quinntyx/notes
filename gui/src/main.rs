@@ -43,7 +43,7 @@ fn hash_color(ext: &str) -> (f64, f64, f64) {
     let mut hasher = XxHash64::with_seed(0);
     hasher.write(ext.as_bytes());
     let hash = hasher.finish();
-    let r = ((hash >> 0) & 0xFF) as f64 / 255.0;
+    let r = (hash & 0xFF) as f64 / 255.0;
     let g = ((hash >> 8) & 0xFF) as f64 / 255.0;
     let b = ((hash >> 16) & 0xFF) as f64 / 255.0;
     (r, g, b)
@@ -91,7 +91,7 @@ fn draw_pango_text(
     size: i32,
     rgba: (f64, f64, f64, f64),
 ) {
-    use pango::{FontDescription, Layout, prelude::*};
+    use pango::{FontDescription, Layout};
     use pangocairo::functions as pc;
 
     let layout: Layout = pc::create_layout(ctx);
@@ -160,54 +160,8 @@ fn ensure_icons() -> PathBuf {
     dir
 }
 
-fn extract_bg_color(html: &str) -> Option<gdk::RGBA> {
-    if let Some(idx) = html.find("background-color:") {
-        let rest = &html[idx + "background-color:".len()..];
-        if let Some(hash) = rest.find('#') {
-            let slice = &rest[hash..hash + 7.min(rest.len() - hash)];
-            if let Ok(rgba) = gdk::RGBA::parse(slice) {
-                return Some(rgba);
-            }
-        }
-    }
-    if let Some(idx) = html.find("bgcolor=") {
-        let rest = &html[idx + 8..];
-        if let Some(end) = rest.find('"') {
-            let slice = &rest[..end];
-            if let Ok(rgba) = gdk::RGBA::parse(slice) {
-                return Some(rgba);
-            }
-        }
-    }
-    None
-}
-
 fn sample_terminal_background(term: &Terminal) -> gdk::RGBA {
-    let rows = term.row_count().max(1) as i64;
-    let cols = term.column_count().max(1) as i64;
-    let coords = [(0, 0), (0, cols - 1), (rows - 1, 0), (rows - 1, cols - 1)];
-    let mut sum = (0.0, 0.0, 0.0);
-    let mut count = 0.0;
-    for &(r, c) in &coords {
-        if let (Some(html), _) = term.text_range_format(vte4::Format::Html, r, c, r, c + 1) {
-            if let Some(col) = extract_bg_color(&html) {
-                sum.0 += col.red() as f64;
-                sum.1 += col.green() as f64;
-                sum.2 += col.blue() as f64;
-                count += 1.0;
-            }
-        }
-    }
-    if count == 0.0 {
-        term.color_background_for_draw()
-    } else {
-        gdk::RGBA::new(
-            (sum.0 / count) as f32,
-            (sum.1 / count) as f32,
-            (sum.2 / count) as f32,
-            1.0,
-        )
-    }
+    term.color_background_for_draw()
 }
 
 fn color_brightness(c: &gdk::RGBA) -> f64 {
@@ -328,6 +282,7 @@ fn show_dashboard(app: &Application, icons_dir: PathBuf, check_default: bool) {
     window.set_child(Some(&vbox));
 
     let open_selected = Rc::new(
+        #[allow(deprecated)]
         glib::clone!(@weak window, @weak app, @weak entry, @strong icons_dir => move || {
             let path_str = entry.text();
             if !path_str.is_empty() {
@@ -348,6 +303,7 @@ fn show_dashboard(app: &Application, icons_dir: PathBuf, check_default: bool) {
     window.show();
 }
 
+#[allow(deprecated)]
 fn open_main_window(app: &Application, icons_dir: PathBuf) {
     let notebook = Notebook::new();
     notebook.set_hexpand(true);
@@ -406,6 +362,7 @@ fn open_main_window(app: &Application, icons_dir: PathBuf) {
     app.add_action_entries(vec![
         gio::ActionEntry::builder("new_note")
             .activate(
+                #[allow(deprecated)]
                 glib::clone!(@weak window, @weak graph_cb => move |_, _, _| {
                     show_new_note_popover(&window, &graph_cb);
                 }),
@@ -413,6 +370,7 @@ fn open_main_window(app: &Application, icons_dir: PathBuf) {
             .build(),
         gio::ActionEntry::builder("close_tab")
             .activate(
+                #[allow(deprecated)]
                 glib::clone!(@weak notebook, @weak open_tabs, @weak graph_tab => move |_,_,_| {
                     close_current_tab(&notebook, &open_tabs, &graph_tab);
                 }),
@@ -420,6 +378,7 @@ fn open_main_window(app: &Application, icons_dir: PathBuf) {
             .build(),
         gio::ActionEntry::builder("open_vault")
             .activate(
+                #[allow(deprecated)]
                 glib::clone!(@weak window, @weak app_clone, @strong icons_dir => move |_,_,_| {
                     window.close();
                     show_dashboard(&app_clone, icons_dir.clone(), false);
@@ -428,6 +387,7 @@ fn open_main_window(app: &Application, icons_dir: PathBuf) {
             .build(),
         gio::ActionEntry::builder("focus_graph")
             .activate(
+                #[allow(deprecated)]
                 glib::clone!(@weak notebook, @weak graph_tab => move |_,_,_| {
                     if let Some(ref g) = *graph_tab.borrow() {
                         if let Some(idx) = notebook.page_num(g) {
@@ -455,7 +415,9 @@ fn open_main_window(app: &Application, icons_dir: PathBuf) {
     let key_controller = gtk4::EventControllerKey::builder()
         .propagation_phase(gtk4::PropagationPhase::Capture)
         .build();
-    key_controller.connect_key_pressed(glib::clone!(@weak app_clone => @default-return glib::Propagation::Proceed, move |_, key, _code, state| {
+    key_controller.connect_key_pressed(
+        #[allow(deprecated)]
+        glib::clone!(@weak app_clone => @default-return glib::Propagation::Proceed, move |_, key, _code, state| {
             let modifier = if cfg!(target_os = "macos") { gdk::ModifierType::META_MASK } else { gdk::ModifierType::CONTROL_MASK };
             if state.contains(modifier) {
                 if key == gdk::Key::n {
@@ -473,7 +435,8 @@ fn open_main_window(app: &Application, icons_dir: PathBuf) {
                 }
             }
             glib::Propagation::Proceed
-        }));
+        })
+    );
     window.add_controller(key_controller);
 
     open_graph_tab(&notebook, &open_tabs, &graph_tab, &graph_cb, &icons_dir);
@@ -625,10 +588,10 @@ fn open_any_path(
             } else {
                 "#fff"
             };
+            let bg_str = bg.to_string();
             provider.load_from_data(&format!(
                 "*{{background-color:{}}}\n.format-bar button{{color:{}}}\n",
-                bg.to_string(),
-                text
+                bg_str, text
             ));
             if let Some(display) = gdk::Display::default() {
                 gtk4::style_context_add_provider_for_display(
@@ -889,7 +852,7 @@ fn open_graph_tab(
                 let grad = cairo::LinearGradient::new(sx, sy, tx, ty);
                 grad.add_color_stop_rgb(0.0, c1.0, c1.1, c1.2);
                 grad.add_color_stop_rgb(1.0, c2.0, c2.1, c2.2);
-                ctx.set_source(&grad);
+                let _ = ctx.set_source(&grad);
             }
             ctx.move_to(sx, sy);
             ctx.line_to(tx, ty);
@@ -908,7 +871,7 @@ fn open_graph_tab(
         }
 
         let text_alpha = ((scale - 0.4) * 5.0).clamp(0.0, 1.0);
-        let show_names = text_alpha > 0.0 && graph.nodes.len() < 50;
+        let show_names = text_alpha > 0.0 && graph.nodes.len() < 200;
 
         for (i, node) in graph.nodes.iter().enumerate() {
             let (x, y) = positions[i];

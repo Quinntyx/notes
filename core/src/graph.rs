@@ -183,9 +183,9 @@ pub fn build_graph() -> Graph {
     // store directed edges using indices
     let mut edges: HashSet<(usize, usize)> = HashSet::new();
 
-    for i in 0..nodes.len() {
+    for (i, node) in nodes.iter().enumerate() {
         let mut content = String::new();
-        for path in &nodes[i].paths {
+        for path in &node.paths {
             if is_text_file(path) {
                 if let Ok(text) = fs::read_to_string(path) {
                     content.push_str(&text);
