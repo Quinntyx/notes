@@ -1,3 +1,5 @@
+use cairo;
+use directories::ProjectDirs;
 use gtk4::gdk;
 use gtk4::prelude::*;
 use gtk4::{
@@ -5,11 +7,13 @@ use gtk4::{
     Orientation, Overlay, Popover, PositionType, gio, glib,
 };
 use open;
-use vte4::{PtyFlags, Terminal, TerminalExtManual};
+use reqwest::blocking as reqwest;
+use vte4::{PtyFlags, Terminal, TerminalExt, TerminalExtManual};
 
 use notes_core::note::{set_vault_dir, vault_dir};
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::fs;
 use std::hash::Hasher;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -64,13 +68,232 @@ fn node_color(node: &notes_core::graph::Node) -> (f64, f64, f64) {
     }
 }
 
+fn node_has_dir(node: &notes_core::graph::Node) -> bool {
+    node.paths.iter().any(|p| p.is_dir())
+}
+
+fn segments_intersect(a1: (f64, f64), a2: (f64, f64), b1: (f64, f64), b2: (f64, f64)) -> bool {
+    fn orient(p: (f64, f64), q: (f64, f64), r: (f64, f64)) -> f64 {
+        (q.0 - p.0) * (r.1 - p.1) - (q.1 - p.1) * (r.0 - p.0)
+    }
+    let o1 = orient(a1, a2, b1);
+    let o2 = orient(a1, a2, b2);
+    let o3 = orient(b1, b2, a1);
+    let o4 = orient(b1, b2, a2);
+    o1 * o2 < 0.0 && o3 * o4 < 0.0
+}
+
+fn draw_pango_text(
+    ctx: &cairo::Context,
+    text: &str,
+    x: f64,
+    y: f64,
+    size: i32,
+    rgba: (f64, f64, f64, f64),
+) {
+    use pango::{FontDescription, Layout, prelude::*};
+    use pangocairo::functions as pc;
+
+    let layout: Layout = pc::create_layout(ctx);
+    layout.set_text(text);
+    let desc = FontDescription::from_string(&format!("Rubik {}", size));
+    layout.set_font_description(Some(&desc));
+    let mut opts = cairo::FontOptions::new().expect("font options");
+    opts.set_hint_style(cairo::HintStyle::None);
+    opts.set_hint_metrics(cairo::HintMetrics::Off);
+    ctx.set_font_options(&opts);
+    let (_ink, logical) = layout.pixel_extents();
+    let nx = x - logical.x() as f64;
+    let ny = y - logical.y() as f64 - logical.height() as f64 / 2.0;
+    ctx.set_source_rgba(rgba.0, rgba.1, rgba.2, rgba.3);
+    ctx.move_to(nx, ny);
+    pc::show_layout(ctx, &layout);
+}
+
+fn ensure_rubik_font() {
+    const RUBIK_URL: &str =
+        "https://fonts.gstatic.com/s/rubik/v30/iJWZBXyIfDnIV5PNhY1KTN7Z-Yh-B4i1UA.ttf";
+    if let Some(proj) = ProjectDirs::from("com", "example", "notes") {
+        let font_dir = proj.data_dir().join("fonts");
+        let _ = std::fs::create_dir_all(&font_dir);
+        let font_path = font_dir.join("Rubik-Regular.ttf");
+        if font_path.exists() {
+            println!("Rubik font already present at {}", font_path.display());
+        } else {
+            println!("Downloading Rubik font...");
+            match reqwest::get(RUBIK_URL).and_then(|r| r.bytes()) {
+                Ok(bytes) => {
+                    if std::fs::write(&font_path, &bytes).is_ok() {
+                        println!("Saved Rubik font to {}", font_path.display());
+                        let _ = std::process::Command::new("fc-cache")
+                            .arg("-f")
+                            .arg(&font_dir)
+                            .status();
+                    } else {
+                        eprintln!("Failed to write Rubik font");
+                    }
+                }
+                Err(e) => eprintln!("Failed to download Rubik font: {}", e),
+            }
+        }
+    }
+}
+
+fn ensure_icons() -> PathBuf {
+    let mut dir = PathBuf::new();
+    if let Some(proj) = ProjectDirs::from("com", "example", "notes") {
+        dir = proj.data_dir().join("icons");
+        let _ = fs::create_dir_all(&dir);
+        let icons: [(&str, &[u8]); 4] = [
+            ("close.svg", include_bytes!("../icons/close.svg")),
+            ("home.svg", include_bytes!("../icons/home.svg")),
+            ("add.svg", include_bytes!("../icons/add.svg")),
+            ("graph.svg", include_bytes!("../icons/graph.svg")),
+        ];
+        for (name, data) in icons.iter() {
+            let path = dir.join(name);
+            if !path.exists() {
+                let _ = fs::write(&path, data);
+            }
+        }
+    }
+    dir
+}
+
+fn extract_bg_color(html: &str) -> Option<gdk::RGBA> {
+    if let Some(idx) = html.find("background-color:") {
+        let rest = &html[idx + "background-color:".len()..];
+        if let Some(hash) = rest.find('#') {
+            let slice = &rest[hash..hash + 7.min(rest.len() - hash)];
+            if let Ok(rgba) = gdk::RGBA::parse(slice) {
+                return Some(rgba);
+            }
+        }
+    }
+    if let Some(idx) = html.find("bgcolor=") {
+        let rest = &html[idx + 8..];
+        if let Some(end) = rest.find('"') {
+            let slice = &rest[..end];
+            if let Ok(rgba) = gdk::RGBA::parse(slice) {
+                return Some(rgba);
+            }
+        }
+    }
+    None
+}
+
+fn sample_terminal_background(term: &Terminal) -> gdk::RGBA {
+    let rows = term.row_count().max(1) as i64;
+    let cols = term.column_count().max(1) as i64;
+    let coords = [(0, 0), (0, cols - 1), (rows - 1, 0), (rows - 1, cols - 1)];
+    let mut sum = (0.0, 0.0, 0.0);
+    let mut count = 0.0;
+    for &(r, c) in &coords {
+        if let (Some(html), _) = term.text_range_format(vte4::Format::Html, r, c, r, c + 1) {
+            if let Some(col) = extract_bg_color(&html) {
+                sum.0 += col.red() as f64;
+                sum.1 += col.green() as f64;
+                sum.2 += col.blue() as f64;
+                count += 1.0;
+            }
+        }
+    }
+    if count == 0.0 {
+        term.color_background_for_draw()
+    } else {
+        gdk::RGBA::new(
+            (sum.0 / count) as f32,
+            (sum.1 / count) as f32,
+            (sum.2 / count) as f32,
+            1.0,
+        )
+    }
+}
+
+fn color_brightness(c: &gdk::RGBA) -> f64 {
+    let r = c.red() as f64;
+    let g = c.green() as f64;
+    let b = c.blue() as f64;
+    r.max(g).max(b)
+}
+
+fn apply_material_css() {
+    if let Some(display) = gdk::Display::default() {
+        let provider = gtk4::CssProvider::new();
+        let font_dir = ProjectDirs::from("com", "example", "notes")
+            .map(|p| p.data_dir().join("fonts"))
+            .expect("failed to resolve data dir");
+        let font_path = font_dir.join("Rubik-Regular.ttf");
+        let css = format!(
+            "@font-face {{ font-family: 'Rubik'; src: url('file://{}'); }}\n",
+            font_path.display()
+        ) + "* { font-family: 'Rubik', sans-serif; font-size: 14px; color: #000000; }\n"
+            + "window { background: #FAFAFA; }\n"
+            + "button { background: #04a5e5; color: white; border-radius: 8px; padding: 6px 12px; }\n"
+            + "entry { background: #FFFFFF; color: black; border-radius: 8px; padding: 6px; }\n"
+            + "notebook header { background: #f5f5f5; }\n"
+            + "menubar { background: #f5f5f5; }\n"
+            + "notebook tab { padding: 2px 11px; min-height: 20px; border-radius: 12px; margin: 4px 1px; border-bottom: none; box-shadow: none; border-image: none; background: #eaeaea; }\n"
+            + "notebook tab:hover { background: #e2e2e2; border-bottom: none; }\n"
+            + "notebook tab:checked { background: #d5d5d5; border-bottom: none; box-shadow: none; border-image: none; }\n"
+            + ".close-btn { background: transparent; border: none; padding: 0; }\n"
+            + ".tab-ext { background: #f0f0f0; color: #555555; font-size: 70%; padding: 1px 3px; border-radius: 8px; margin: 1px 6px; }\n"
+            + "notebook tab:checked .tab-ext { background: #cfcfcf; }\n"
+            + "notebook tab:hover .tab-ext { background: #d0d0d0; }\n"
+            + "notebook tab.graph-tab { padding: 0; margin: 0; min-width: 16px; max-width: 16px; min-height: 16px; max-height: 16px; }\n"
+            + ".graph-btn { padding: 4px 8px; }\n"
+            + ".format-bar { padding: 0 2px; min-height: 16px; }\n"
+            + ".format-bar button { background: transparent; border-radius: 0; padding: 2px 6px; margin: 0 2px; border: none; box-shadow: none; }\n"
+            + ".format-bar button:hover:enabled { background: #ececec; }\n"
+            + ".format-bar button:disabled { background: #e0e0e0; color: #555555; }\n";
+        provider.load_from_data(&css);
+        gtk4::style_context_add_provider_for_display(
+            &display,
+            &provider,
+            gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
+        );
+    }
+    if let Some(settings) = gtk4::Settings::default() {
+        settings.set_gtk_application_prefer_dark_theme(false);
+    }
+}
+
+fn maybe_open_default_vault(app: &Application, icons_dir: PathBuf) -> bool {
+    if let Ok(cwd) = std::env::current_dir() {
+        for candidate in ["notes", "vault"] {
+            let path = cwd.join(candidate);
+            if path.is_dir() {
+                set_vault_dir(path.clone());
+                open_main_window(app, icons_dir);
+                return true;
+            }
+        }
+        if let Some(name) = cwd.file_name().and_then(|s| s.to_str()) {
+            if name == "notes" || name == "vault" {
+                set_vault_dir(cwd);
+                open_main_window(app, icons_dir);
+                return true;
+            }
+        }
+    }
+    false
+}
+
 pub fn run_gui() {
+    ensure_rubik_font();
+    let icons_dir = ensure_icons();
     let app = Application::builder()
         .application_id("com.example.notes")
         .build();
 
-    app.connect_activate(|app| {
-        show_dashboard(app);
+    app.connect_startup(|_| {
+        apply_material_css();
+    });
+
+    app.connect_activate(move |app| {
+        if !maybe_open_default_vault(app, icons_dir.clone()) {
+            show_dashboard(app, icons_dir.clone(), true);
+        }
     });
 
     // Pass an empty argument list to avoid `g_application_open` from
@@ -80,7 +303,10 @@ pub fn run_gui() {
     app.run_with_args::<&str>(&[]);
 }
 
-fn show_dashboard(app: &Application) {
+fn show_dashboard(app: &Application, icons_dir: PathBuf, check_default: bool) {
+    if check_default && maybe_open_default_vault(app, icons_dir.clone()) {
+        return;
+    }
     let window = ApplicationWindow::builder()
         .application(app)
         .title("Select Vault")
@@ -101,26 +327,34 @@ fn show_dashboard(app: &Application) {
     vbox.append(&button);
     window.set_child(Some(&vbox));
 
-    button.connect_clicked(
-        glib::clone!(@weak window, @weak app, @weak entry => move |_| {
+    let open_selected = Rc::new(
+        glib::clone!(@weak window, @weak app, @weak entry, @strong icons_dir => move || {
             let path_str = entry.text();
             if !path_str.is_empty() {
                 let dir = expand_tilde(path_str.as_str());
                 set_vault_dir(dir);
                 window.close();
-                open_main_window(&app);
+                open_main_window(&app, icons_dir.clone());
             }
         }),
     );
+    let open_btn = open_selected.clone();
+    button.connect_clicked(move |_| {
+        open_btn();
+    });
+    entry.connect_activate(move |_| {
+        open_selected();
+    });
     window.show();
 }
 
-fn open_main_window(app: &Application) {
+fn open_main_window(app: &Application, icons_dir: PathBuf) {
     let notebook = Notebook::new();
     notebook.set_hexpand(true);
     notebook.set_vexpand(true);
 
-    let open_tabs: Rc<RefCell<HashMap<String, Terminal>>> = Rc::new(RefCell::new(HashMap::new()));
+    let open_tabs: Rc<RefCell<HashMap<String, gtk4::Widget>>> =
+        Rc::new(RefCell::new(HashMap::new()));
     let graph_tab: Rc<RefCell<Option<Overlay>>> = Rc::new(RefCell::new(None));
     let graph_cb: Rc<RefCell<Option<std::boxed::Box<dyn Fn(String)>>>> =
         Rc::new(RefCell::new(None));
@@ -131,10 +365,33 @@ fn open_main_window(app: &Application) {
     file_menu.append(Some("Close Tab"), Some("app.close_tab"));
     file_menu.append(Some("Quit"), Some("app.quit"));
     menu.append_submenu(Some("File"), &file_menu);
+
+    let vault_menu = gio::Menu::new();
+    vault_menu.append(Some("Open Vault"), Some("app.open_vault"));
+    menu.append_submenu(Some("Vault"), &vault_menu);
+
+    let view_menu = gio::Menu::new();
+    view_menu.append(Some("Graph View"), Some("app.focus_graph"));
+    menu.append_submenu(Some("View"), &view_menu);
+
+    let use_global_menu = if cfg!(target_os = "macos") {
+        true
+    } else {
+        std::env::var("XDG_CURRENT_DESKTOP")
+            .map(|v| v.contains("KDE"))
+            .unwrap_or(false)
+    };
+
+    if use_global_menu {
+        app.set_menubar(Some(&menu));
+    }
+
     let menu_bar = gtk4::PopoverMenuBar::from_model(Some(&menu));
 
     let vbox = Box::new(Orientation::Vertical, 0);
-    vbox.append(&menu_bar);
+    if !use_global_menu {
+        vbox.append(&menu_bar);
+    }
     vbox.append(&notebook);
 
     let window = ApplicationWindow::builder()
@@ -161,6 +418,25 @@ fn open_main_window(app: &Application) {
                 }),
             )
             .build(),
+        gio::ActionEntry::builder("open_vault")
+            .activate(
+                glib::clone!(@weak window, @weak app_clone, @strong icons_dir => move |_,_,_| {
+                    window.close();
+                    show_dashboard(&app_clone, icons_dir.clone(), false);
+                }),
+            )
+            .build(),
+        gio::ActionEntry::builder("focus_graph")
+            .activate(
+                glib::clone!(@weak notebook, @weak graph_tab => move |_,_,_| {
+                    if let Some(ref g) = *graph_tab.borrow() {
+                        if let Some(idx) = notebook.page_num(g) {
+                            notebook.set_current_page(Some(idx));
+                        }
+                    }
+                }),
+            )
+            .build(),
         gio::ActionEntry::builder("quit")
             .activate(move |app: &Application, _, _| {
                 app.quit();
@@ -170,6 +446,8 @@ fn open_main_window(app: &Application) {
 
     app.set_accels_for_action("app.new_note", &["<Primary>n"]);
     app.set_accels_for_action("app.close_tab", &["<Primary>w"]);
+    app.set_accels_for_action("app.open_vault", &["<Primary>o"]);
+    app.set_accels_for_action("app.focus_graph", &["<Primary>g"]);
     if cfg!(target_os = "macos") {
         app.set_accels_for_action("app.quit", &["<Primary>q"]);
     }
@@ -186,6 +464,9 @@ fn open_main_window(app: &Application) {
                 } else if key == gdk::Key::w {
                     app_clone.activate_action("close_tab", None);
                     return glib::Propagation::Stop;
+                } else if key == gdk::Key::o {
+                    app_clone.activate_action("open_vault", None);
+                    return glib::Propagation::Stop;
                 } else if cfg!(target_os = "macos") && key == gdk::Key::q {
                     app_clone.activate_action("quit", None);
                     return glib::Propagation::Stop;
@@ -195,21 +476,23 @@ fn open_main_window(app: &Application) {
         }));
     window.add_controller(key_controller);
 
-    open_graph_tab(&notebook, &open_tabs, &graph_tab, &graph_cb);
+    open_graph_tab(&notebook, &open_tabs, &graph_tab, &graph_cb, &icons_dir);
 
     window.show();
 }
 
 fn open_any_path(
     notebook: &Notebook,
-    open_tabs: &Rc<RefCell<HashMap<String, Terminal>>>,
+    open_tabs: &Rc<RefCell<HashMap<String, gtk4::Widget>>>,
     node: &notes_core::graph::Node,
     path: &Path,
+    icons_dir: PathBuf,
 ) {
-    let key = path.to_string_lossy().to_string();
+    let key_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    let key = key_path.to_string_lossy().to_string();
     if is_text_file(path) {
-        if let Some(term) = open_tabs.borrow().get(&key).cloned() {
-            if let Some(page) = notebook.page_num(&term) {
+        if let Some(widget) = open_tabs.borrow().get(&key).cloned() {
+            if let Some(page) = notebook.page_num(&widget) {
                 notebook.set_current_page(Some(page));
                 return;
             }
@@ -230,18 +513,71 @@ fn open_any_path(
             |_| {},
         );
 
-        let label = Label::new(path.file_name().and_then(|s| s.to_str()));
+        if let Some(app) = gio::Application::default() {
+            let ctrl = gtk4::EventControllerKey::builder()
+                .propagation_phase(gtk4::PropagationPhase::Capture)
+                .build();
+            ctrl.connect_key_pressed(move |_, k, _code, state| {
+                let modifier = if cfg!(target_os = "macos") {
+                    gdk::ModifierType::META_MASK
+                } else {
+                    gdk::ModifierType::CONTROL_MASK
+                };
+                if state.contains(modifier) {
+                    match k {
+                        gdk::Key::n => app.activate_action("new_note", None),
+                        gdk::Key::w => app.activate_action("close_tab", None),
+                        gdk::Key::o => app.activate_action("open_vault", None),
+                        gdk::Key::g => app.activate_action("focus_graph", None),
+                        _ => return glib::Propagation::Proceed,
+                    }
+                    return glib::Propagation::Stop;
+                }
+                glib::Propagation::Proceed
+            });
+            term.add_controller(ctrl);
+        }
+
+        let ext = if path.is_dir() {
+            String::new()
+        } else {
+            path.extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("")
+                .to_ascii_uppercase()
+        };
+        let base = if path.is_dir() {
+            path.file_name().and_then(|s| s.to_str()).unwrap_or("")
+        } else {
+            path.file_stem().and_then(|s| s.to_str()).unwrap_or("")
+        };
+        let ext_label = Label::new(Some(&ext));
+        ext_label.add_css_class("tab-ext");
+        let ext_wrap = Box::new(Orientation::Vertical, 0);
+        ext_wrap.set_margin_top(2);
+        ext_wrap.set_margin_bottom(2);
+        ext_wrap.append(&ext_label);
+        let label = Label::new(Some(base));
         let close_btn = Button::new();
-        close_btn.set_child(Some(&Image::from_icon_name("window-close-symbolic")));
+        close_btn.add_css_class("close-btn");
+        close_btn.set_child(Some(&Image::from_file(icons_dir.join("close.svg"))));
         close_btn.set_size_request(16, 16);
         let tab_box = Box::new(Orientation::Horizontal, 4);
+        tab_box.set_valign(gtk4::Align::Center);
+        close_btn.set_margin_start(8);
+        ext_wrap.set_valign(gtk4::Align::Center);
+        label.set_valign(gtk4::Align::Center);
+        close_btn.set_valign(gtk4::Align::Center);
+        tab_box.append(&ext_wrap);
         tab_box.append(&label);
         tab_box.append(&close_btn);
 
         let format_bar = Box::new(Orientation::Horizontal, 4);
+        format_bar.add_css_class("format-bar");
         let mut exts: Vec<(String, PathBuf)> = node
             .paths
             .iter()
+            .filter(|p| !p.is_dir())
             .filter_map(|p| {
                 p.extension()
                     .and_then(|s| s.to_str())
@@ -256,15 +592,53 @@ fn open_any_path(
             let tabs_clone = open_tabs.clone();
             let node_clone = node.clone();
             let path_clone = path_u.clone();
+            let icons_dir_clone = icons_dir.clone();
             btn.connect_clicked(move |_| {
-                open_any_path(&nb_clone, &tabs_clone, &node_clone, &path_clone);
+                open_any_path(
+                    &nb_clone,
+                    &tabs_clone,
+                    &node_clone,
+                    &path_clone,
+                    icons_dir_clone.clone(),
+                );
             });
+            if path_u == path {
+                btn.set_sensitive(false);
+            }
             format_bar.append(&btn);
         }
 
         let container = Box::new(Orientation::Vertical, 0);
         container.append(&format_bar);
-        container.append(&term);
+        let term_wrap = Box::new(Orientation::Vertical, 0);
+        let provider = gtk4::CssProvider::new();
+        term_wrap.set_hexpand(true);
+        term_wrap.set_vexpand(true);
+        term_wrap.append(&term);
+        container.append(&term_wrap);
+
+        let term_clone = term.clone();
+        glib::timeout_add_local(std::time::Duration::from_millis(100), move || {
+            let bg = sample_terminal_background(&term_clone);
+            let text = if color_brightness(&bg) > 0.5 {
+                "#000"
+            } else {
+                "#fff"
+            };
+            provider.load_from_data(&format!(
+                "*{{background-color:{}}}\n.format-bar button{{color:{}}}\n",
+                bg.to_string(),
+                text
+            ));
+            if let Some(display) = gdk::Display::default() {
+                gtk4::style_context_add_provider_for_display(
+                    &display,
+                    &provider,
+                    gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
+                );
+            }
+            glib::ControlFlow::Break
+        });
 
         notebook.append_page(&container, Some(&tab_box));
         notebook.set_tab_reorderable(&container, true);
@@ -275,13 +649,16 @@ fn open_any_path(
         let key_clone = key.clone();
         let nb_clone = notebook.clone();
         let tabs_rc = open_tabs.clone();
+        let container_for_close = container.clone();
         close_btn.connect_clicked(move |_| {
-            if let Some(idx) = nb_clone.page_num(&container) {
+            if let Some(idx) = nb_clone.page_num(&container_for_close) {
                 nb_clone.remove_page(Some(idx));
             }
             tabs_rc.borrow_mut().remove(&key_clone);
         });
-        open_tabs.borrow_mut().insert(key, term);
+        open_tabs
+            .borrow_mut()
+            .insert(key, container.clone().upcast::<gtk4::Widget>());
     } else if let Err(err) = open::that(path) {
         eprintln!("Failed to open {:?}: {}", path, err);
     }
@@ -289,10 +666,12 @@ fn open_any_path(
 
 fn open_graph_tab(
     notebook: &Notebook,
-    open_tabs: &Rc<RefCell<HashMap<String, Terminal>>>,
+    open_tabs: &Rc<RefCell<HashMap<String, gtk4::Widget>>>,
     graph_tab: &Rc<RefCell<Option<Overlay>>>,
     graph_cb: &Rc<RefCell<Option<std::boxed::Box<dyn Fn(String)>>>>,
+    icons_dir: &Path,
 ) {
+    let icons_dir = icons_dir.to_path_buf();
     use notes_core::graph::{load_graph_data, update_open_notes};
     use std::f64::consts::PI;
 
@@ -397,16 +776,20 @@ fn open_graph_tab(
     container.set_vexpand(true);
     container.set_child(Some(&area));
 
-    let button_box = Box::new(Orientation::Vertical, 5);
+    let button_box = Box::new(Orientation::Vertical, 10);
     button_box.set_halign(gtk4::Align::Start);
     button_box.set_valign(gtk4::Align::End);
+    button_box.set_margin_start(10);
+    button_box.set_margin_bottom(10);
 
     let home_button = Button::new();
-    home_button.set_child(Some(&Image::from_icon_name("go-home-symbolic")));
-    home_button.set_size_request(40, 40);
+    home_button.add_css_class("graph-btn");
+    home_button.set_child(Some(&Image::from_file(icons_dir.join("home.svg"))));
+    home_button.set_size_request(28, 28);
     let new_button = Button::new();
-    new_button.set_child(Some(&Image::from_icon_name("document-new-symbolic")));
-    new_button.set_size_request(40, 40);
+    new_button.add_css_class("graph-btn");
+    new_button.set_child(Some(&Image::from_file(icons_dir.join("add.svg"))));
+    new_button.set_size_request(28, 28);
     button_box.append(&home_button);
     button_box.append(&new_button);
     container.add_overlay(&button_box);
@@ -462,8 +845,9 @@ fn open_graph_tab(
         let graph = &st.data.graph;
         let positions = &st.positions;
 
-        ctx.set_source_rgb(1.0, 1.0, 1.0);
+        ctx.set_source_rgb(0.98, 0.98, 0.98);
         ctx.paint().unwrap();
+        ctx.select_font_face("Rubik", cairo::FontSlant::Normal, cairo::FontWeight::Normal);
         ctx.set_font_size(13.0);
 
         if graph.nodes.is_empty() {
@@ -474,8 +858,14 @@ fn open_graph_tab(
         let pan_x = st.pan_x + width as f64 / 2.0;
         let pan_y = st.pan_y + height as f64 / 2.0;
 
-        ctx.set_line_width(1.0);
-        ctx.set_source_rgb(0.6, 0.6, 0.6);
+        let mut edge_width = 1.0;
+        if scale > 0.4 {
+            edge_width = 1.5;
+        }
+        if scale > 0.6 {
+            edge_width = 2.0;
+        }
+        ctx.set_line_width(edge_width);
         for &(from, to) in &graph.edges {
             let (sx, sy) = positions[from];
             let (tx, ty) = positions[to];
@@ -483,8 +873,37 @@ fn open_graph_tab(
             let sy = sy * scale + pan_y;
             let tx = tx * scale + pan_x;
             let ty = ty * scale + pan_y;
+            let dir_from = node_has_dir(&graph.nodes[from]);
+            let dir_to = node_has_dir(&graph.nodes[to]);
+            let mut c1 = st.colors.get(from).copied().unwrap_or((0.6, 0.6, 0.6));
+            let mut c2 = st.colors.get(to).copied().unwrap_or((0.6, 0.6, 0.6));
+            if dir_from {
+                c1 = (0.0, 0.0, 0.0);
+            }
+            if dir_to {
+                c2 = (0.0, 0.0, 0.0);
+            }
+            if c1 == c2 {
+                ctx.set_source_rgb(c1.0, c1.1, c1.2);
+            } else {
+                let grad = cairo::LinearGradient::new(sx, sy, tx, ty);
+                grad.add_color_stop_rgb(0.0, c1.0, c1.1, c1.2);
+                grad.add_color_stop_rgb(1.0, c2.0, c2.1, c2.2);
+                ctx.set_source(&grad);
+            }
             ctx.move_to(sx, sy);
             ctx.line_to(tx, ty);
+            let _ = ctx.stroke();
+
+            // arrow head
+            let arrow_len = 6.0 * scale.max(0.5);
+            let angle = (ty - sy).atan2(tx - sx);
+            for offset in [-0.3, 0.3] {
+                let ax = tx - arrow_len * (angle + offset).cos();
+                let ay = ty - arrow_len * (angle + offset).sin();
+                ctx.move_to(tx, ty);
+                ctx.line_to(ax, ay);
+            }
             let _ = ctx.stroke();
         }
 
@@ -497,7 +916,7 @@ fn open_graph_tab(
             let sy = y * scale + pan_y;
             let radius = 8.0 + (node.links as f64).sqrt() * 2.0;
             let (r, g, b) = st.colors.get(i).copied().unwrap_or((0.2, 0.6, 0.86));
-            if node.is_directory() {
+            if node_has_dir(node) {
                 let fill = if st.hover == Some(i) {
                     (0.9, 0.9, 0.9)
                 } else {
@@ -520,21 +939,27 @@ fn open_graph_tab(
                 } else {
                     ctx.set_source_rgb(r, g, b);
                 }
-                let _ = ctx.fill_preserve();
-                ctx.set_source_rgb(0.0, 0.0, 0.0);
-                let _ = ctx.stroke();
+                let _ = ctx.fill();
             }
 
             let label_alpha = if st.hover == Some(i) { 1.0 } else { text_alpha };
             if st.hover == Some(i) || show_names {
                 let offset_x = radius * scale + 8.0;
                 let offset_y = -2.0 * scale;
-                ctx.move_to(sx + offset_x, sy + offset_y);
-                ctx.set_source_rgba(0.0, 0.0, 0.0, label_alpha);
-                let _ = ctx.show_text(&node.name);
+                let text_x = sx + offset_x;
+                let text_y = sy + offset_y;
+                draw_pango_text(
+                    ctx,
+                    &node.name,
+                    text_x,
+                    text_y,
+                    13,
+                    (0.0, 0.0, 0.0, label_alpha),
+                );
                 let formats: Vec<String> = node
                     .paths
                     .iter()
+                    .filter(|p| !p.is_dir())
                     .filter_map(|p| {
                         p.extension()
                             .and_then(|e| e.to_str())
@@ -546,9 +971,9 @@ fn open_graph_tab(
                 formats.dedup();
                 if !formats.is_empty() {
                     let fmt_text = formats.join(", ");
-                    ctx.move_to(sx + offset_x, sy + offset_y + 14.0);
-                    ctx.set_source_rgba(0.3, 0.3, 0.3, label_alpha);
-                    let _ = ctx.show_text(&fmt_text);
+                    let fx = sx + offset_x;
+                    let fy = sy + offset_y + 16.0;
+                    draw_pango_text(ctx, &fmt_text, fx, fy, 13, (0.3, 0.3, 0.3, label_alpha));
                 }
             }
             ctx.new_path();
@@ -581,10 +1006,25 @@ fn open_graph_tab(
     let zoom_state = state.clone();
     let zoom_area = area.clone();
     let scroll = gtk4::EventControllerScroll::new(gtk4::EventControllerScrollFlags::VERTICAL);
-    scroll.connect_scroll(move |_, _dx, dy| {
+    scroll.connect_scroll(move |controller, _dx, dy| {
         let mut st = zoom_state.borrow_mut();
         let factor = (1.0 - dy as f64 * 0.05).max(0.1);
+        let old_scale = st.scale;
         st.scale *= factor;
+        if let Some(event) = controller.current_event() {
+            if let Some((mx, my)) = event.position() {
+                let width = zoom_area.width() as f64;
+                let height = zoom_area.height() as f64;
+                let pan_x = st.pan_x + width / 2.0;
+                let pan_y = st.pan_y + height / 2.0;
+                let gx = (mx - pan_x) / old_scale;
+                let gy = (my - pan_y) / old_scale;
+                let new_pan_x = mx - gx * st.scale;
+                let new_pan_y = my - gy * st.scale;
+                st.pan_x = new_pan_x - width / 2.0;
+                st.pan_y = new_pan_y - height / 2.0;
+            }
+        }
         zoom_area.queue_draw();
         glib::Propagation::Stop
     });
@@ -624,6 +1064,7 @@ fn open_graph_tab(
     let click_area = area.clone();
     let notebook_clone = notebook.clone();
     let tabs_clone = open_tabs.clone();
+    let click_icons_dir = icons_dir.clone();
     let click = gtk4::GestureClick::new();
     click.connect_released(move |_, _n, x, y| {
         let note_name_opt = {
@@ -688,7 +1129,13 @@ fn open_graph_tab(
             }
         }
         if let Some((node, path)) = chosen {
-            open_any_path(&notebook_clone, &tabs_clone, &node, &path);
+            open_any_path(
+                &notebook_clone,
+                &tabs_clone,
+                &node,
+                &path,
+                click_icons_dir.clone(),
+            );
             let mut st = click_state.borrow_mut();
             notes_core::graph::update_open_notes(&mut st.data, &[]);
             click_area.queue_draw();
@@ -710,7 +1157,7 @@ fn open_graph_tab(
                     let dy = st.positions[i].1 - st.positions[j].1;
                     let dist2 = dx * dx + dy * dy + 0.01;
                     let dist = dist2.sqrt();
-                    let rep = 2000.0 / dist2;
+                    let rep = 1200.0 / dist2;
                     let fx = dx / dist * rep;
                     let fy = dy / dist * rep;
                     forces[i].0 += fx;
@@ -730,6 +1177,34 @@ fn open_graph_tab(
                 forces[a].1 -= fy;
                 forces[b].0 += fx;
                 forces[b].1 += fy;
+            }
+            // Edge intersection repulsion
+            let edge_count = st.data.graph.edges.len();
+            for i in 0..edge_count {
+                let (a1, b1) = st.data.graph.edges[i];
+                let p1 = st.positions[a1];
+                let p2 = st.positions[b1];
+                for j in (i + 1)..edge_count {
+                    let (a2, b2) = st.data.graph.edges[j];
+                    if a1 == a2 || a1 == b2 || b1 == a2 || b1 == b2 {
+                        continue;
+                    }
+                    let p3 = st.positions[a2];
+                    let p4 = st.positions[b2];
+                    if segments_intersect(p1, p2, p3, p4) {
+                        let perp = (p2.1 - p1.1, p1.0 - p2.0);
+                        let len = (perp.0 * perp.0 + perp.1 * perp.1).sqrt().max(1.0);
+                        let push = 0.05 / len;
+                        forces[a1].0 += perp.0 * push;
+                        forces[a1].1 += perp.1 * push;
+                        forces[b1].0 += perp.0 * push;
+                        forces[b1].1 += perp.1 * push;
+                        forces[a2].0 -= perp.0 * push;
+                        forces[a2].1 -= perp.1 * push;
+                        forces[b2].0 -= perp.0 * push;
+                        forces[b2].1 -= perp.1 * push;
+                    }
+                }
             }
             for i in 0..n {
                 st.velocities[i].0 = (st.velocities[i].0 + forces[i].0) * 0.85;
@@ -763,8 +1238,18 @@ fn open_graph_tab(
         }
     });
 
-    let graph_icon = Image::from_icon_name("media-playlist-consecutive-symbolic");
-    notebook.append_page(&container, Some(&graph_icon));
+    let graph_icon = Image::from_file(icons_dir.join("graph.svg"));
+    graph_icon.set_pixel_size(16);
+    graph_icon.set_size_request(16, 16);
+    graph_icon.set_valign(gtk4::Align::Center);
+    let graph_box = Box::new(Orientation::Horizontal, 0);
+    graph_box.set_margin_start(1);
+    graph_box.set_margin_end(1);
+    graph_box.set_halign(gtk4::Align::Center);
+    graph_box.set_valign(gtk4::Align::Center);
+    graph_box.add_css_class("graph-tab");
+    graph_box.append(&graph_icon);
+    notebook.append_page(&container, Some(&graph_box));
     notebook.set_tab_reorderable(&container, false);
     if let Some(page) = notebook.page_num(&container) {
         notebook.set_current_page(Some(page));
@@ -824,7 +1309,7 @@ fn show_new_note_popover(
 
 fn close_current_tab(
     notebook: &Notebook,
-    open_tabs: &Rc<RefCell<HashMap<String, Terminal>>>,
+    open_tabs: &Rc<RefCell<HashMap<String, gtk4::Widget>>>,
     graph_tab: &Rc<RefCell<Option<Overlay>>>,
 ) {
     if let Some(current) = notebook.current_page() {
@@ -834,17 +1319,15 @@ fn close_current_tab(
             }
         }
         if let Some(widget) = notebook.nth_page(Some(current)) {
-            if let Ok(term) = widget.clone().downcast::<Terminal>() {
-                let mut remove_key = None;
-                for (k, v) in open_tabs.borrow().iter() {
-                    if v == &term {
-                        remove_key = Some(k.clone());
-                        break;
-                    }
+            let mut remove_key = None;
+            for (k, w) in open_tabs.borrow().iter() {
+                if w == &widget {
+                    remove_key = Some(k.clone());
+                    break;
                 }
-                if let Some(k) = remove_key {
-                    open_tabs.borrow_mut().remove(&k);
-                }
+            }
+            if let Some(k) = remove_key {
+                open_tabs.borrow_mut().remove(&k);
             }
         }
         notebook.remove_page(Some(current));

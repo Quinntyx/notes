@@ -154,7 +154,12 @@ pub fn build_graph() -> Graph {
     if let Ok(entries) = fs::read_dir(vault_dir()) {
         for entry in entries.flatten() {
             let path = entry.path();
-            if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+            let name_os = if path.is_dir() {
+                path.file_name()
+            } else {
+                path.file_stem()
+            };
+            if let Some(stem) = name_os.and_then(|s| s.to_str()) {
                 let canon = canonicalize(stem);
                 let idx = if let Some(idx) = index_map.get(&canon).copied() {
                     idx
@@ -264,7 +269,12 @@ pub fn load_graph_data() -> GraphData {
     if let Ok(entries) = fs::read_dir(vault_dir()) {
         for entry in entries.flatten() {
             let path = entry.path();
-            if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+            let name_os = if path.is_dir() {
+                path.file_name()
+            } else {
+                path.file_stem()
+            };
+            if let Some(stem) = name_os.and_then(|s| s.to_str()) {
                 let canon = canonicalize(stem);
                 let idx = if let Some(idx) = index_map.get(&canon).copied() {
                     idx
@@ -314,7 +324,13 @@ pub fn load_graph_data() -> GraphData {
 
 pub fn update_open_notes(data: &mut GraphData, open_notes: &[String]) {
     for name in open_notes {
-        if let Some(stem) = PathBuf::from(name).file_stem().and_then(|s| s.to_str()) {
+        let path = PathBuf::from(name);
+        let name_os = if path.is_dir() {
+            path.file_name()
+        } else {
+            path.file_stem()
+        };
+        if let Some(stem) = name_os.and_then(|s| s.to_str()) {
             let canon = canonicalize(stem);
             if let Some(idx) = data.canonical.iter().position(|c| c == &canon) {
                 let mut text = String::new();
@@ -335,7 +351,10 @@ pub fn update_open_notes(data: &mut GraphData, open_notes: &[String]) {
 
 #[cfg(test)]
 mod tests {
+    use super::Node;
     use super::{canonicalize, find_unique_links, normalize};
+    use std::fs;
+    use tempfile::tempdir;
 
     #[test]
     fn longest_match() {
@@ -373,5 +392,25 @@ mod tests {
         let mut links = find_unique_links(&text, &canonical, &normalized);
         links.sort();
         assert_eq!(links, vec![1]);
+    }
+
+    #[test]
+    fn canonicalize_dots_and_hyphens() {
+        assert_eq!(canonicalize("foo.bar"), "foobar");
+        assert_eq!(canonicalize("foo-bar"), "foobar");
+    }
+
+    #[test]
+    fn directory_primary_format_none() {
+        let tmp = tempdir().unwrap();
+        let dir_path = tmp.path().join("testing.d");
+        fs::create_dir(&dir_path).unwrap();
+        let node = Node {
+            name: "testing.d".into(),
+            paths: vec![dir_path],
+            links: 0,
+        };
+        assert!(node.is_directory());
+        assert_eq!(node.primary_file_format(), None);
     }
 }

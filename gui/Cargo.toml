@@ -7,7 +7,11 @@ default-run = "notes-gui"
 [dependencies]
 notes-core = { path = "../core" }
 gtk4 = "0.9"
-vte4 = "0.8"
+vte4 = { version = "0.8", features = ["v0_72"] }
 cairo-rs = "0.20"
 open = "5"
 twox-hash = "1"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
+directories = "6"
+pango = "0.20"
+pangocairo = "0.20"
