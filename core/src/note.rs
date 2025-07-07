@@ -33,7 +33,7 @@ pub struct Note {
 impl Note {
     pub fn new(title: String, content: String, aliases: Option<Vec<String>>) -> Self {
         let mut path = vault_dir();
-        path.push(format!("{}.md", title));
+        path.push(format!("{title}.md"));
         Note {
             title,
             content,
@@ -72,7 +72,7 @@ impl Note {
 
     pub fn path_from_title(title: &str) -> PathBuf {
         let mut path = vault_dir();
-        path.push(format!("{}.md", title));
+        path.push(format!("{title}.md"));
         path
     }
 }

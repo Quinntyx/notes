@@ -1,4 +1,3 @@
-use cairo;
 use directories::ProjectDirs;
 use gtk4::gdk;
 use gtk4::prelude::*;
@@ -6,7 +5,6 @@ use gtk4::{
     Application, ApplicationWindow, Box, Button, DrawingArea, Entry, Image, Label, Notebook,
     Orientation, Overlay, Popover, PositionType, gio, glib,
 };
-use open;
 use reqwest::blocking as reqwest;
 use vte4::{PtyFlags, Terminal, TerminalExt, TerminalExtManual};
 
@@ -18,6 +16,8 @@ use std::hash::Hasher;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use twox_hash::XxHash64;
+
+type GraphCb = Rc<RefCell<Option<std::boxed::Box<dyn Fn(String)>>>>;
 
 fn expand_tilde(path: &str) -> PathBuf {
     #[cfg(unix)]
@@ -96,7 +96,7 @@ fn draw_pango_text(
 
     let layout: Layout = pc::create_layout(ctx);
     layout.set_text(text);
-    let desc = FontDescription::from_string(&format!("Rubik {}", size));
+    let desc = FontDescription::from_string(&format!("Rubik {size}"));
     layout.set_font_description(Some(&desc));
     let mut opts = cairo::FontOptions::new().expect("font options");
     opts.set_hint_style(cairo::HintStyle::None);
@@ -133,7 +133,7 @@ fn ensure_rubik_font() {
                         eprintln!("Failed to write Rubik font");
                     }
                 }
-                Err(e) => eprintln!("Failed to download Rubik font: {}", e),
+                Err(e) => eprintln!("Failed to download Rubik font: {e}"),
             }
         }
     }
@@ -281,9 +281,16 @@ fn show_dashboard(app: &Application, icons_dir: PathBuf, check_default: bool) {
     vbox.append(&button);
     window.set_child(Some(&vbox));
 
-    let open_selected = Rc::new(
-        #[allow(deprecated)]
-        glib::clone!(@weak window, @weak app, @weak entry, @strong icons_dir => move || {
+    let open_selected = Rc::new(glib::clone!(
+        #[weak]
+        window,
+        #[weak]
+        app,
+        #[weak]
+        entry,
+        #[strong]
+        icons_dir,
+        move || {
             let path_str = entry.text();
             if !path_str.is_empty() {
                 let dir = expand_tilde(path_str.as_str());
@@ -291,8 +298,8 @@ fn show_dashboard(app: &Application, icons_dir: PathBuf, check_default: bool) {
                 window.close();
                 open_main_window(&app, icons_dir.clone());
             }
-        }),
-    );
+        },
+    ));
     let open_btn = open_selected.clone();
     button.connect_clicked(move |_| {
         open_btn();
@@ -303,7 +310,6 @@ fn show_dashboard(app: &Application, icons_dir: PathBuf, check_default: bool) {
     window.show();
 }
 
-#[allow(deprecated)]
 fn open_main_window(app: &Application, icons_dir: PathBuf) {
     let notebook = Notebook::new();
     notebook.set_hexpand(true);
@@ -312,8 +318,7 @@ fn open_main_window(app: &Application, icons_dir: PathBuf) {
     let open_tabs: Rc<RefCell<HashMap<String, gtk4::Widget>>> =
         Rc::new(RefCell::new(HashMap::new()));
     let graph_tab: Rc<RefCell<Option<Overlay>>> = Rc::new(RefCell::new(None));
-    let graph_cb: Rc<RefCell<Option<std::boxed::Box<dyn Fn(String)>>>> =
-        Rc::new(RefCell::new(None));
+    let graph_cb: GraphCb = Rc::new(RefCell::new(None));
 
     let menu = gio::Menu::new();
     let file_menu = gio::Menu::new();
@@ -361,41 +366,57 @@ fn open_main_window(app: &Application, icons_dir: PathBuf) {
     let app_clone = app.clone();
     app.add_action_entries(vec![
         gio::ActionEntry::builder("new_note")
-            .activate(
-                #[allow(deprecated)]
-                glib::clone!(@weak window, @weak graph_cb => move |_, _, _| {
+            .activate(glib::clone!(
+                #[weak]
+                window,
+                #[weak]
+                graph_cb,
+                move |_, _, _| {
                     show_new_note_popover(&window, &graph_cb);
-                }),
-            )
+                }
+            ))
             .build(),
         gio::ActionEntry::builder("close_tab")
-            .activate(
-                #[allow(deprecated)]
-                glib::clone!(@weak notebook, @weak open_tabs, @weak graph_tab => move |_,_,_| {
+            .activate(glib::clone!(
+                #[weak]
+                notebook,
+                #[weak]
+                open_tabs,
+                #[weak]
+                graph_tab,
+                move |_, _, _| {
                     close_current_tab(&notebook, &open_tabs, &graph_tab);
-                }),
-            )
+                }
+            ))
             .build(),
         gio::ActionEntry::builder("open_vault")
-            .activate(
-                #[allow(deprecated)]
-                glib::clone!(@weak window, @weak app_clone, @strong icons_dir => move |_,_,_| {
+            .activate(glib::clone!(
+                #[weak]
+                window,
+                #[weak]
+                app_clone,
+                #[strong]
+                icons_dir,
+                move |_, _, _| {
                     window.close();
                     show_dashboard(&app_clone, icons_dir.clone(), false);
-                }),
-            )
+                }
+            ))
             .build(),
         gio::ActionEntry::builder("focus_graph")
-            .activate(
-                #[allow(deprecated)]
-                glib::clone!(@weak notebook, @weak graph_tab => move |_,_,_| {
+            .activate(glib::clone!(
+                #[weak]
+                notebook,
+                #[weak]
+                graph_tab,
+                move |_, _, _| {
                     if let Some(ref g) = *graph_tab.borrow() {
                         if let Some(idx) = notebook.page_num(g) {
                             notebook.set_current_page(Some(idx));
                         }
                     }
-                }),
-            )
+                }
+            ))
             .build(),
         gio::ActionEntry::builder("quit")
             .activate(move |app: &Application, _, _| {
@@ -415,10 +436,17 @@ fn open_main_window(app: &Application, icons_dir: PathBuf) {
     let key_controller = gtk4::EventControllerKey::builder()
         .propagation_phase(gtk4::PropagationPhase::Capture)
         .build();
-    key_controller.connect_key_pressed(
-        #[allow(deprecated)]
-        glib::clone!(@weak app_clone => @default-return glib::Propagation::Proceed, move |_, key, _code, state| {
-            let modifier = if cfg!(target_os = "macos") { gdk::ModifierType::META_MASK } else { gdk::ModifierType::CONTROL_MASK };
+    key_controller.connect_key_pressed(glib::clone!(
+        #[weak]
+        app_clone,
+        #[upgrade_or]
+        glib::Propagation::Proceed,
+        move |_, key, _code, state| {
+            let modifier = if cfg!(target_os = "macos") {
+                gdk::ModifierType::META_MASK
+            } else {
+                gdk::ModifierType::CONTROL_MASK
+            };
             if state.contains(modifier) {
                 if key == gdk::Key::n {
                     app_clone.activate_action("new_note", None);
@@ -435,8 +463,8 @@ fn open_main_window(app: &Application, icons_dir: PathBuf) {
                 }
             }
             glib::Propagation::Proceed
-        })
-    );
+        }
+    ));
     window.add_controller(key_controller);
 
     open_graph_tab(&notebook, &open_tabs, &graph_tab, &graph_cb, &icons_dir);
@@ -590,8 +618,7 @@ fn open_any_path(
             };
             let bg_str = bg.to_string();
             provider.load_from_data(&format!(
-                "*{{background-color:{}}}\n.format-bar button{{color:{}}}\n",
-                bg_str, text
+                "*{{background-color:{bg_str}}}\n.format-bar button{{color:{text}}}\n"
             ));
             if let Some(display) = gdk::Display::default() {
                 gtk4::style_context_add_provider_for_display(
@@ -623,7 +650,7 @@ fn open_any_path(
             .borrow_mut()
             .insert(key, container.clone().upcast::<gtk4::Widget>());
     } else if let Err(err) = open::that(path) {
-        eprintln!("Failed to open {:?}: {}", path, err);
+        eprintln!("Failed to open {path:?}: {err}");
     }
 }
 
@@ -631,7 +658,7 @@ fn open_graph_tab(
     notebook: &Notebook,
     open_tabs: &Rc<RefCell<HashMap<String, gtk4::Widget>>>,
     graph_tab: &Rc<RefCell<Option<Overlay>>>,
-    graph_cb: &Rc<RefCell<Option<std::boxed::Box<dyn Fn(String)>>>>,
+    graph_cb: &GraphCb,
     icons_dir: &Path,
 ) {
     let icons_dir = icons_dir.to_path_buf();
@@ -959,8 +986,8 @@ fn open_graph_tab(
     gesture.connect_drag_update(move |_, dx, dy| {
         let mut st = pan_state_upd.borrow_mut();
         let (sx, sy) = *start_pan_update.borrow();
-        st.pan_x = sx + dx as f64;
-        st.pan_y = sy + dy as f64;
+        st.pan_x = sx + dx;
+        st.pan_y = sy + dy;
         pan_area.queue_draw();
     });
     area.add_controller(gesture);
@@ -971,7 +998,7 @@ fn open_graph_tab(
     let scroll = gtk4::EventControllerScroll::new(gtk4::EventControllerScrollFlags::VERTICAL);
     scroll.connect_scroll(move |controller, _dx, dy| {
         let mut st = zoom_state.borrow_mut();
-        let factor = (1.0 - dy as f64 * 0.05).max(0.1);
+        let factor = (1.0 - dy * 0.05).max(0.1);
         let old_scale = st.scale;
         st.scale *= factor;
         if let Some(event) = controller.current_event() {
@@ -1001,8 +1028,8 @@ fn open_graph_tab(
         let mut st = hover_state.borrow_mut();
         let pan_x = st.pan_x + hover_area.width() as f64 / 2.0;
         let pan_y = st.pan_y + hover_area.height() as f64 / 2.0;
-        let gx = (x as f64 - pan_x) / st.scale;
-        let gy = (y as f64 - pan_y) / st.scale;
+        let gx = (x - pan_x) / st.scale;
+        let gy = (y - pan_y) / st.scale;
         st.hover = None;
         for (i, node) in st.data.graph.nodes.iter().enumerate() {
             let (nx, ny) = st.positions[i];
@@ -1034,8 +1061,8 @@ fn open_graph_tab(
             let st = click_state.borrow();
             let pan_x = st.pan_x + click_area.width() as f64 / 2.0;
             let pan_y = st.pan_y + click_area.height() as f64 / 2.0;
-            let gx = (x as f64 - pan_x) / st.scale;
-            let gy = (y as f64 - pan_y) / st.scale;
+            let gx = (x - pan_x) / st.scale;
+            let gy = (y - pan_y) / st.scale;
             let mut res = None;
             for (i, node) in st.data.graph.nodes.iter().enumerate() {
                 let (nx, ny) = st.positions[i];
@@ -1169,13 +1196,13 @@ fn open_graph_tab(
                     }
                 }
             }
-            for i in 0..n {
-                st.velocities[i].0 = (st.velocities[i].0 + forces[i].0) * 0.85;
-                st.velocities[i].1 = (st.velocities[i].1 + forces[i].1) * 0.85;
-                if st.velocities[i].0.abs() < 0.001 && forces[i].0.abs() < 0.001 {
+            for (i, force) in forces.iter().enumerate().take(n) {
+                st.velocities[i].0 = (st.velocities[i].0 + force.0) * 0.85;
+                st.velocities[i].1 = (st.velocities[i].1 + force.1) * 0.85;
+                if st.velocities[i].0.abs() < 0.001 && force.0.abs() < 0.001 {
                     st.velocities[i].0 *= 0.5;
                 }
-                if st.velocities[i].1.abs() < 0.001 && forces[i].1.abs() < 0.001 {
+                if st.velocities[i].1.abs() < 0.001 && force.1.abs() < 0.001 {
                     st.velocities[i].1 *= 0.5;
                 }
                 st.positions[i].0 += st.velocities[i].0 * 0.1;
@@ -1225,10 +1252,7 @@ fn create_new_note(title: &str) {
     let _ = note.save();
 }
 
-fn show_new_note_popover(
-    window: &ApplicationWindow,
-    graph_cb: &Rc<RefCell<Option<std::boxed::Box<dyn Fn(String)>>>>,
-) {
+fn show_new_note_popover(window: &ApplicationWindow, graph_cb: &GraphCb) {
     let pop = Popover::new();
     pop.set_has_arrow(false);
     pop.set_autohide(true);
