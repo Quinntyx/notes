@@ -15,3 +15,15 @@ Only put UI and event-handling logic here. Core algorithms should remain in the 
 - Prefer popovers for modal interactions to keep the interface lightweight.
 - Keep node label text size constant as you zoom; offset labels outward relative to zoom so they don't overlap the nodes.
 - Node format indicators are rendered in ALL CAPS across the interface.
+- All UI fonts use the Google Rubik family. Do **not** commit font binaries; the application downloads the files at runtime if missing.
+- Follow Google Material Design colors and spacing. Use soft corner radius on buttons and default to the Material light theme with window background `#FAFAFA`.
+- Accent color `#04a5e5` should style primary buttons and tabs.
+- Tabs use pill-shaped buttons with generous horizontal padding and light gray headers so the menu bar and tab bar share the same `#f5f5f5` background.
+- Tab titles omit file extensions. A small gray bubble with the uppercase extension sits at the left of each tab label.
+- Format bar buttons have transparent backgrounds; the active or hovered format shows a gray highlight.
+- The "formats bar" refers to the row of buttons for each format a logical node has. The button for the format currently
+  open in a tab should be disabled and tinted gray.
+- Material Symbols icons are stored as SVGs under `icons/` and loaded at runtime. Avoid adding binary assets like `.ttf` to the repo; fonts and icons are downloaded on startup.
+- The application logs when the Rubik font is fetched so you can confirm it was downloaded.
+- Register the CSS provider in the application's `startup` signal so it overrides any system theme.
+- The alt menu integrates with the OS global menubar on macOS and KDE when available.

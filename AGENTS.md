@@ -12,6 +12,7 @@ This repository contains a small Rust codebase for a note taking application. Th
 ## Development workflow
 
 - Ensure `cargo build` and `cargo test` (when tests exist) complete without errors before opening a pull request.
+- Run `cargo clippy` and resolve all warnings. Compiler warnings should be fixed so builds are clean.
 - Commit messages should be short, present tense commands such as "Add graph view" or "Fix editor layout".
 
 These conventions help keep contributions uniform and easy to review.

@@ -1,22 +1,25 @@
-use once_cell::sync::OnceCell;
+use once_cell::sync::Lazy;
 use std::fs;
 use std::io::{self, Write};
 use std::path::PathBuf;
+use std::sync::Mutex;
 // Intentionally removed: use std::path::Path;
 
 pub const NOTES_DIR: &str = "notes";
 
-static VAULT_DIR: OnceCell<PathBuf> = OnceCell::new();
+static VAULT_DIR: Lazy<Mutex<PathBuf>> = Lazy::new(|| Mutex::new(PathBuf::from(NOTES_DIR)));
 
 pub fn set_vault_dir<P: Into<PathBuf>>(dir: P) {
-    let _ = VAULT_DIR.set(dir.into());
+    if let Ok(mut p) = VAULT_DIR.lock() {
+        *p = dir.into();
+    }
 }
 
 pub fn vault_dir() -> PathBuf {
     VAULT_DIR
-        .get()
-        .cloned()
-        .unwrap_or_else(|| PathBuf::from(NOTES_DIR))
+        .lock()
+        .map(|p| p.clone())
+        .unwrap_or_else(|_| PathBuf::from(NOTES_DIR))
 }
 
 #[derive(Debug, Clone)]
@@ -30,11 +33,11 @@ pub struct Note {
 impl Note {
     pub fn new(title: String, content: String, aliases: Option<Vec<String>>) -> Self {
         let mut path = vault_dir();
-        path.push(format!("{}.md", title));
+        path.push(format!("{title}.md"));
         Note {
             title,
             content,
-            aliases: aliases.unwrap_or_else(Vec::new),
+            aliases: aliases.unwrap_or_default(),
             path,
         }
     }
@@ -69,7 +72,7 @@ impl Note {
 
     pub fn path_from_title(title: &str) -> PathBuf {
         let mut path = vault_dir();
-        path.push(format!("{}.md", title));
+        path.push(format!("{title}.md"));
         path
     }
 }
